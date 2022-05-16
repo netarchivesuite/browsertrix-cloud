@@ -18,47 +18,8 @@ stringData:
 {{- if .Values.mongo_local }}
 
 ---
-kind: PersistentVolumeClaim
-apiVersion: v1
-metadata:
-  name: mongo-storage-pvc
-  annotations:
-    "helm.sh/resource-policy": keep
-spec:
-  accessModes:
-    - ReadWriteOnce
-
-  resources:
-    requests:
-      storage: 2Gi
-
-  {{- if .Values.volume_storage_class }}
-  storageClassName: {{ .Values.volume_storage_class }}
-  {{- end }}
-
-
-{{- if not .Values.volume_storage_class }}
----
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: "local-mongo-store-pv"
-  annotations:
-    "helm.sh/resource-policy": keep
-spec:
-  capacity:
-    storage: 2Gi
-
-  accessModes:
-    - "ReadWriteOnce"
-
-  hostPath:
-    path: /tmp/btrix-mongo-data
-{{- end }}
-
----
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: local-mongo
   namespace: {{ .Release.Namespace }}
@@ -66,7 +27,27 @@ spec:
   selector:
     matchLabels:
       app: local-mongo
+  serviceName: local-mongo
   replicas: {{ .Values.api_num_replicas }}
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: data-db
+        annotations:
+          helm.sh/resource-policy: keep
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: 2Gi
+
+      {{- if .Values.volume_storage_class }}
+      storageClassName: {{ .Values.volume_storage_class }}
+      {{- end }}
+
   template:
     metadata:
       labels:
@@ -77,11 +58,6 @@ spec:
       nodeSelector:
         nodeType: {{ .Values.main_node_type }}
       {{- end }}
-
-      volumes:
-        - name: data-db
-          persistentVolumeClaim:
-            claimName: mongo-storage-pvc
 
       containers:
         - name: mongo
@@ -116,6 +92,7 @@ spec:
                 - mongo
                 - --eval
                 - db.adminCommand('ping')
+
 ---
 apiVersion: v1
 kind: Service
@@ -127,7 +104,8 @@ metadata:
     app: local-mongo
 
 spec:
-  type: ClusterIP
+  #type: ClusterIP
+  clusterIP: None
   selector:
     app: local-mongo
 
@@ -135,7 +113,7 @@ spec:
     - protocol: TCP
       port: 27017
       targetPort: 27017
-      name: minio
+      name: mongo
 
 {{- end }}
 
