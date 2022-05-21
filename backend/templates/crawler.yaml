@@ -2,8 +2,10 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: crawl-{{ id }}
+  name: {{ id }}
   namespace: {{ namespace }}
+
+spec:
   selector:
     matchLabels:
       crawl: {{ id }}
@@ -16,8 +18,8 @@ metadata:
   #  name: {{ job_name }}
   #  # uid
 
-  serviceName: crawl-{{ id }}
-  replicas: {{ crawl_workers }}
+  serviceName: {{ id }}
+  replicas: {{ crawler_workers }}
   podManagementPolicy: Parallel
   volumeClaimTemplates:
     - metadata:
@@ -44,15 +46,18 @@ metadata:
 
     spec:
       terminationGracePeriod: {{ termination_grace_secs }}
-      nodeSelector: {{ node_selector }}
+      #nodeSelector: {{ crawl_node_selector }}
       volumes:
         - name: crawl-config
           configMap:
-            name: crawl-config-{{ config_id }}
+            name: crawl-config-{{ cid }}
 
         - name: cluster-redis-conf
           configMap:
-            name: cluster-redis-conf
+            name: shared-job-config
+            items:
+              - key: redis.conf
+                path: redis.conf
 
         - name: redis-conf
           emptyDir: {}
@@ -67,14 +72,14 @@ metadata:
             - |
               set -ex
               # if no ordinal found in hostname, something is wrong, exit
-              [[ `hostname` =~ ([^-]+)-([0-9]+)$ ]] || exit 1
+              [[ `hostname` =~ (.+)-([0-9]+)$ ]] || exit 1
               ordinal=${BASH_REMATCH[2]}
-              base=${BASE_REMATCH[1]}
+              base=${BASH_REMATCH[1]}
 
               # if ordinal is 0, use main config, otherwise use replica
               cp /cluster-redis-conf/redis.conf /redis-conf/redis.conf
               if [[ $ordinal -ne 0 ]]; then
-                echo "replicaof $base-0 6379" >> /redis-conf/redis.conf
+                echo "replicaof $base-0.$base 6379" >> /redis-conf/redis.conf
               fi
 
           volumeMounts:
@@ -88,7 +93,7 @@ metadata:
         - name: crawler
           image: {{ crawler_image }}
           imagePullPolicy: {{ crawler_image_pull_policy }}
-          command: {{ command }}
+          command: ["crawl", "--config", "/tmp/crawl-config.json", "--redisStoreUrl", "{{ redis_url }}"]
 
           volumeMounts:
             - name: crawl-config
@@ -97,7 +102,7 @@ metadata:
               readOnly: True
 
             - name: crawl-data
-              mounthPath: /crawls
+              mountPath: /crawls
               subPath: crawls
 
           envFrom:
@@ -111,26 +116,38 @@ metadata:
             - name: CRAWL_ID
               value: {{ id }}
 
+            - name: REDIS_URL
+              value: {{ redis_url }}
+
+            - name: NO_LAUNCH_REDIS
+              value: "1"
+
             - name: STORE_PATH
-              value: {{ storage_path }}
+              valueFrom:
+                configMapKeyRef:
+                  name: crawl-config-{{ cid }}
+                  key: STORE_PATH
 
             - name: STORE_FILENAME
-              value: {{ out_filename }}
+              valueFrom:
+                configMapKeyRef:
+                  name: crawl-config-{{ cid }}
+                  key: STORE_FILENAME
 
           resources:
             limits:
-              cpu: {{ limits_cpu }}
-              memory: {{ limits_memory }}
+              cpu: {{ crawler_limits_cpu }}
+              memory: {{ crawler_limits_memory }}
 
             requests:
-              cpu: {{ requests_cpu }}
-              memory: {{ request_memory }}
+              cpu: {{ crawler_requests_cpu }}
+              memory: {{ crawler_requests_memory }}
 
-          {% if liveness_port }}
+          {% if crawler_liveness_port and crawler_liveness_port != '0' %}
           livenessProbe:
             httpGet:
               path: /healthz
-              port: {{ liveness_port }}
+              port: {{ crawler_liveness_port }}
 
             initialDelaySeconds: 15
             periodSeconds: 120
@@ -169,12 +186,14 @@ metadata:
 apiVersion: v1
 kind: Service
 metadata:
-  crawl: {{ id }}
+  name: {{ id }}
+  labels:
+    crawl: {{ id }}
  
 spec:
   clusterIP: None
   selector:
-     crawl: {{ id }}
+    crawl: {{ id }}
 
   ports:
     - protocol: TCP

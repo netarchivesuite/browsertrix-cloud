@@ -5,22 +5,34 @@ import asyncio
 import json
 import datetime
 import sys
+import signal
 
 import yaml
+
 from redis import asyncio as aioredis
 
 from kubernetes_asyncio import client, config
-
-from kubernetes_asyncio.utils import create_from_dict, FailToCreateError
+from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 
 from crawl_updater import CrawlUpdater
+from utils import create_from_yaml
 from crawls import CrawlCompleteIn, Crawl, CrawlFile
 
 app = FastAPI()
 loop = asyncio.get_running_loop()
+
+
+# =============================================================================
+def sig_handler(*args, **kwargs):
+    print("Signal received, exiting", flush=True)
+    sys.exit(3)
+
+
+signal.signal(signal.SIGINT, sig_handler)
+signal.signal(signal.SIGTERM, sig_handler)
 
 
 # =============================================================================
@@ -42,55 +54,82 @@ class K8SCrawlJob:
 
         self.storage_path = os.environ.get("STORE_PATH")
         self.storage_name = os.environ.get("STORE_NAME")
+        self.out_filename = os.environ.get("OUT_FILENAME")
 
-        self.apps_api = client.AppsV1Api()
-        self.core_api = client.CoreV1Api()
+        self.api_client = ApiClient()
+        self.apps_api = client.AppsV1Api(self.api_client)
+        self.core_api = client.CoreV1Api(self.api_client)
 
         self.templates = Jinja2Templates(directory="templates")
 
+        self.redis = None
+        # pylint: disable=line-too-long
+        #self.redis_url = f"redis://{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
+        self.redis_url = f"redis://{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
+
+
         self.crawl_updater = CrawlUpdater()
 
-        loop.create_task(self.init_crawl_state())
+        loop.create_task(self.async_init())
 
-        loop.create_task(self.init_redis_watch())
+    async def async_init(self):
+        await self.init_crawl_state()
+
+        await self.init_redis_watch()
 
     async def init_crawl_state(self):
         """ init crawl state objects from crawler.yaml """
-        params = {}
+        statefulset = await self._get_crawl_stateful()
 
-        for name in os.environ:
-            if name.startswith("CRAWL_"):
-                params[name[len("CRAWL_") :].lower()] = os.environ.get(name)
+        # if already exists, don't try to recreate
+        if statefulset:
+            return
+
+        with open("/config/config.yaml") as fh:
+            params = yaml.safe_load(fh)
 
         params["id"] = self.crawl_id
-
+        params["cid"] = self.cid
+        params["storage_name"] = self.storage_name or "default"
+        params["storage_path"] = self.storage_path or ""
+        params["out_filename"] = self.out_filename or ""
+        params["redis_url"] = self.redis_url
         data = self.templates.env.get_template("crawler.yaml").render(params)
 
-        await self.create_from_yaml(client, data)
+        print("params", params, flush=True)
+        print("config", data, flush=True)
+
+        await create_from_yaml(self.api_client, data, namespace=self.namespace)
 
     async def init_redis_watch(self):
         """ start watching crawl stateful set redis for queued messages """
 
-        # pylint: disable=line-too-long
-        redis_url = f"redis://crawl-{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
+        retry = 10
+        start_time = None
 
-        self.cluster_redis = await aioredis.from_url(
-            redis_url, encoding="utf-8", decode_responses=True
-        )
+        while True:
+            try:
+                self.redis = await aioredis.from_url(
+                    self.redis_url, encoding="utf-8", decode_responses=True
+                )
+                start_time = await self.redis.get("start_time")
+                print("Redis Connected!", flush=True)
+                break
+            except:
+                print(f"Retrying redis connection in {retry}", flush=True)
+                await asyncio.sleep(retry)
 
-        if not await self.cluster_redis.get("start_time"):
-            await self.cluster_redis.set(
+        if not start_time:
+            await self.redis.set(
                 "start_time",
                 str(datetime.datetime.utcnow().replace(microsecond=0, tzinfo=None)),
             )
 
-        # if await cluster_redis.get("all_done"):
+        # if await redis.get("all_done"):
 
         while True:
             try:
-                _, value = await self.cluster_redis.blpop(
-                    self.crawls_done_key, timeout=0
-                )
+                _, value = await self.redis.blpop(self.crawls_done_key, timeout=0)
                 value = json.loads(value)
                 await self.handle_crawl_file_complete(CrawlCompleteIn(**value))
 
@@ -110,7 +149,7 @@ class K8SCrawlJob:
 
         # manual = job.metadata.annotations.get("btrix.run.manual") == "1"
         # if manual and not self.no_delete_jobs and crawlcomplete.completed:
-        start_time = await self.cluster_redis.get("start_time")
+        start_time = await self.redis.get("start_time")
 
         crawl = self.make_crawl(crawlcomplete, start_time)
 
@@ -134,7 +173,7 @@ class K8SCrawlJob:
             hash=crawlcomplete.hash,
         )
 
-        await self.crawl_updater.store_crawl(self.cluster_redis, crawl, crawl_file)
+        await self.crawl_updater.store_crawl(self.redis, crawl, crawl_file)
 
         if crawlcomplete.completed:
             loop.create_task(self.delete_crawl_objects())
@@ -155,29 +194,9 @@ class K8SCrawlJob:
             finished=datetime.datetime.utcnow().replace(microsecond=0, tzinfo=None),
         )
 
-    async def create_from_yaml(self, k8s_client, doc):
-        """ init k8s objects from yaml """
-        yml_document_all = yaml.safe_load_all(doc)
-        api_exceptions = []
-        k8s_objects = []
-        for yml_document in yml_document_all:
-            try:
-                created = await create_from_dict(
-                    k8s_client, yml_document, verbose=False, namespace=self.namespace
-                )
-                k8s_objects.append(created)
-            except FailToCreateError as failure:
-                api_exceptions.extend(failure)
-
-        if api_exceptions:
-            raise FailToCreateError(api_exceptions)
-
-        return k8s_objects
-
     async def delete_crawl_objects(self):
-        statefulset = await self.apps_api.read_namespaced_stateful_set(
-            name=self.crawl_id, namespace=self.namespace
-        )
+        """ delete crawl stateful set """
+        statefulset = await self._get_crawl_stateful()
 
         if not statefulset:
             return False
@@ -197,15 +216,13 @@ class K8SCrawlJob:
         return True
 
     async def exit_in(self, sec, status=0):
+        """ exit after delay """
         await asyncio.sleep(sec)
         sys.exit(status)
 
     async def scale_to(self, size):
         """ scale to "size" replicas """
-        statefulset = await self.apps_api.read_namespaced_stateful_set(
-            name=self.crawl_id,
-            namespace=self.namespace,
-        )
+        statefulset = await self._get_crawl_stateful()
 
         if not statefulset:
             return False
@@ -217,6 +234,15 @@ class K8SCrawlJob:
         )
 
         return True
+
+    async def _get_crawl_stateful(self):
+        try:
+            return await self.apps_api.read_namespaced_stateful_set(
+                name=self.crawl_id,
+                namespace=self.namespace,
+            )
+        except:
+            return None
 
 
 # ============================================================================

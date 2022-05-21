@@ -10,7 +10,11 @@ from redis import asyncio as aioredis
 
 from kubernetes_asyncio import client, config, watch
 from kubernetes_asyncio.stream import WsApiClient
+from kubernetes_asyncio.client.api_client import ApiClient
 
+from fastapi.templating import Jinja2Templates
+
+from utils import create_from_yaml
 from archives import S3Storage
 from crawls import Crawl, CrawlOut, CrawlFile
 
@@ -33,10 +37,12 @@ class K8SManager:
 
         self.crawl_ops = None
 
-        self.core_api = client.CoreV1Api()
+        self.api_client = ApiClient()
+
+        self.core_api = client.CoreV1Api(self.api_client)
         self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
-        self.batch_api = client.BatchV1Api()
-        self.batch_beta_api = client.BatchV1beta1Api()
+        self.batch_api = client.BatchV1Api(self.api_client)
+        self.batch_beta_api = client.BatchV1beta1Api(self.api_client)
 
         self.namespace = namespace
         self._default_storages = {}
@@ -44,7 +50,7 @@ class K8SManager:
         self.crawler_image = os.environ["CRAWLER_IMAGE"]
         self.crawler_image_pull_policy = os.environ["CRAWLER_PULL_POLICY"]
 
-        self.crawl_retries = int(os.environ.get("CRAWL_RETRIES", "3"))
+        self.crawl_retries = int(os.environ.get("CRAWLER_RETRIES", "3"))
 
         self.crawler_liveness_port = int(os.environ.get("CRAWLER_LIVENESS_PORT", 0))
 
@@ -72,6 +78,8 @@ class K8SManager:
             self.crawl_node_selector = {"nodeType": crawl_node_type}
         else:
             self.crawl_node_selector = {}
+
+        self.templates = Jinja2Templates(directory="templates")
 
         self.loop = asyncio.get_running_loop()
         self.loop.create_task(self.run_event_loop())
@@ -178,6 +186,54 @@ class K8SManager:
             )
 
     async def add_crawl_config(
+        self,
+        crawlconfig,
+        storage,
+        run_now,
+        out_filename,
+        profile_filename,
+    ):
+        """add new crawl as cron job, store crawl config in configmap"""
+
+        if storage.type == "default":
+            storage_name = storage.name
+            storage_path = storage.path
+        else:
+            storage_name = str(crawlconfig.aid)
+            storage_path = ""
+
+        labels = {
+            "btrix.user": str(crawlconfig.userid),
+            "btrix.archive": str(crawlconfig.aid),
+            "btrix.crawlconfig": str(crawlconfig.id),
+        }
+
+        await self.check_storage(storage_name)
+
+        # Create Config Map
+        config_map = self._create_config_map(
+            crawlconfig, labels, STORE_PATH=storage_path, STORE_FILENAME=out_filename
+        )
+
+        # Create Cron Job
+        await self.core_api.create_namespaced_config_map(
+            namespace=self.namespace, body=config_map
+        )
+
+        params = {
+            "cid": str(crawlconfig.id),
+            "userid": str(crawlconfig.userid),
+            "aid": str(crawlconfig.aid),
+            "job_image": os.environ.get("JOB_IMAGE"),
+            "namespace": self.namespace,
+            "storage_name": storage_name,
+        }
+
+        data = self.templates.env.get_template("job.yaml").render(params)
+
+        await create_from_yaml(self.api_client, data, namespace=self.namespace)
+
+    async def add_crawl_config_2(
         self,
         crawlconfig,
         storage,
@@ -678,15 +734,18 @@ class K8SManager:
             propagation_policy="Foreground",
         )
 
-    def _create_config_map(self, crawlconfig, labels):
+    def _create_config_map(self, crawlconfig, labels, **kwargs):
         """ Create Config Map based on CrawlConfig + labels """
+        data = kwargs
+        data["crawl-config.json"] = json.dumps(crawlconfig.get_raw_config())
+
         config_map = client.V1ConfigMap(
             metadata={
                 "name": f"crawl-config-{crawlconfig.id}",
                 "namespace": self.namespace,
                 "labels": labels,
             },
-            data={"crawl-config.json": json.dumps(crawlconfig.get_raw_config())},
+            data=data,
         )
 
         return config_map
