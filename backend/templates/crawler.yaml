@@ -1,0 +1,186 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: crawl-{{ id }}
+  namespace: {{ namespace }}
+  selector:
+    matchLabels:
+      crawl: {{ id }}
+
+  #ownerReferences:
+  #- apiVersion: batch/v1
+  #  blockOwnerDeletion: true
+  #  controller: true
+  #  kind: Job
+  #  name: {{ job_name }}
+  #  # uid
+
+  serviceName: crawl-{{ id }}
+  replicas: {{ crawl_workers }}
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: crawl-data
+        annotations:
+          helm.sh/resource-policy: keep
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: {{ requests_hd }}
+
+      {% if volume_storage_class %}
+      storageClassName: {{ volume_storage_class }}
+      {% endif %}
+
+  template:
+    metadata:
+      labels:
+        crawl: {{ id }}
+
+    spec:
+      terminationGracePeriod: {{ termination_grace_secs }}
+      nodeSelector: {{ node_selector }}
+      volumes:
+        - name: crawl-config
+          configMap:
+            name: crawl-config-{{ config_id }}
+
+        - name: cluster-redis-conf
+          configMap:
+            name: cluster-redis-conf
+
+        - name: redis-conf
+          emptyDir: {}
+
+      initContainers:
+        - name: init-redis
+          image: {{ redis_image }}
+          imagePullPolicy: {{ redis_image_pull_policy }}
+          command:
+            - bash
+            - "-c"
+            - |
+              set -ex
+              # if no ordinal found in hostname, something is wrong, exit
+              [[ `hostname` =~ ([^-]+)-([0-9]+)$ ]] || exit 1
+              ordinal=${BASH_REMATCH[2]}
+              base=${BASE_REMATCH[1]}
+
+              # if ordinal is 0, use main config, otherwise use replica
+              cp /cluster-redis-conf/redis.conf /redis-conf/redis.conf
+              if [[ $ordinal -ne 0 ]]; then
+                echo "replicaof $base-0 6379" >> /redis-conf/redis.conf
+              fi
+
+          volumeMounts:
+            - name: cluster-redis-conf
+              mountPath: /cluster-redis-conf
+
+            - name: redis-conf
+              mountPath: /redis-conf
+
+      containers:
+        - name: crawler
+          image: {{ crawler_image }}
+          imagePullPolicy: {{ crawler_image_pull_policy }}
+          command: {{ command }}
+
+          volumeMounts:
+            - name: crawl-config
+              mountPath: /tmp/crawl-config.json
+              subPath: crawl-config.json
+              readOnly: True
+
+            - name: crawl-data
+              mounthPath: /crawls
+              subPath: crawls
+
+          envFrom:
+            - configMapRef:
+                name: shared-crawler-config
+
+            - secretRef:
+                name: storage-{{ storage_name }}
+
+          env:
+            - name: CRAWL_ID
+              value: {{ id }}
+
+            - name: STORE_PATH
+              value: {{ storage_path }}
+
+            - name: STORE_FILENAME
+              value: {{ out_filename }}
+
+          resources:
+            limits:
+              cpu: {{ limits_cpu }}
+              memory: {{ limits_memory }}
+
+            requests:
+              cpu: {{ requests_cpu }}
+              memory: {{ request_memory }}
+
+          {% if liveness_port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ liveness_port }}
+
+            initialDelaySeconds: 15
+            periodSeconds: 120
+            failureThreshold: 3
+          {% endif %}
+
+        - name: redis
+          image: {{ redis_image }}
+          imagePullPolicy: {{ redis_image_pull_policy }}
+
+          args: ["/redis-conf/redis.conf", "--appendonly", "yes"]
+          volumeMounts:
+            - name: crawl-data
+              mountPath: /data
+              subPath: redis
+
+            - name: redis-conf
+              mountPath: /redis-conf
+
+          resources:
+            limits:
+              cpu: {{ redis_limits_cpu }}
+              memory: {{ redis_limits_memory }}
+
+            requests:
+              cpu: {{ redis_requests_cpu }}
+              memory: {{ redis_requests_memory }}
+
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  crawl: {{ id }}
+ 
+spec:
+  clusterIP: None
+  selector:
+     crawl: {{ id }}
+
+  ports:
+    - protocol: TCP
+      port: 9037
+      name: screencast
+
+    - protocol: TCP
+      port: 6379
+      name: redis
