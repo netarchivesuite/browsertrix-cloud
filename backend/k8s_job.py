@@ -12,27 +12,18 @@ import yaml
 from redis import asyncio as aioredis
 
 from kubernetes_asyncio import client, config
+from kubernetes_asyncio.stream import WsApiClient
 from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 
 from crawl_updater import CrawlUpdater
-from utils import create_from_yaml
+from utils import create_from_yaml, send_signal_to_pods
 from crawls import CrawlCompleteIn, Crawl, CrawlFile
 
 app = FastAPI()
 loop = asyncio.get_running_loop()
-
-
-# =============================================================================
-def sig_handler(*args, **kwargs):
-    print("Signal received, exiting", flush=True)
-    sys.exit(3)
-
-
-signal.signal(signal.SIGINT, sig_handler)
-signal.signal(signal.SIGTERM, sig_handler)
 
 
 # =============================================================================
@@ -44,31 +35,39 @@ class K8SCrawlJob:
 
         self.namespace = os.environ.get("CRAWL_NAMESPACE") or "crawlers"
 
-        self.crawl_id = "crawl-" + os.environ.get("CRAWL_ID")
+        self.crawl_id = os.environ.get("CRAWL_ID")
+        if self.crawl_id.startswith("job-"):
+            self.crawl_id = self.crawl_id[4:]
+
         self.crawls_done_key = "crawls-done"
 
         self.aid = os.environ.get("ARCHIVE_ID")
         self.cid = os.environ.get("CRAWL_CONFIG_ID")
+        self.controller_id = os.environ.get("CTRL_ID")
         self.userid = os.environ.get("USER_ID")
         self.is_manual = os.environ.get("RUN_MANUAL") == "1"
 
         self.storage_path = os.environ.get("STORE_PATH")
         self.storage_name = os.environ.get("STORE_NAME")
-        self.out_filename = os.environ.get("OUT_FILENAME")
+
+        self.initial_scale = os.environ.get("INITIAL_SCALE") or 1
 
         self.api_client = ApiClient()
         self.apps_api = client.AppsV1Api(self.api_client)
         self.core_api = client.CoreV1Api(self.api_client)
+        self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
 
         self.templates = Jinja2Templates(directory="templates")
 
         self.redis = None
         # pylint: disable=line-too-long
-        #self.redis_url = f"redis://{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
-        self.redis_url = f"redis://{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
-
+        # self.redis_url = f"redis://{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
+        # self.redis_url = f"redis://redis-{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
+        self.redis_url = f"redis://redis-{self.crawl_id}-0.redis-{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
 
         self.crawl_updater = CrawlUpdater()
+
+        self.shutdown_pending = False
 
         loop.create_task(self.async_init())
 
@@ -89,10 +88,11 @@ class K8SCrawlJob:
             params = yaml.safe_load(fh)
 
         params["id"] = self.crawl_id
+        params["controller_id"] = self.controller_id
         params["cid"] = self.cid
         params["storage_name"] = self.storage_name or "default"
         params["storage_path"] = self.storage_path or ""
-        params["out_filename"] = self.out_filename or ""
+        params["scale"] = self.initial_scale
         params["redis_url"] = self.redis_url
         data = self.templates.env.get_template("crawler.yaml").render(params)
 
@@ -196,29 +196,26 @@ class K8SCrawlJob:
 
     async def delete_crawl_objects(self):
         """ delete crawl stateful set """
-        statefulset = await self._get_crawl_stateful()
-
-        if not statefulset:
-            return False
-
-        await self.core_api.delete_namespaced_service(
-            name=statefulset.spec.service_name,
-            namespace=self.namespace,
-            propagation_policy="Foreground",
+        statefulsets = await self.apps_api.list_namespaced_stateful_set(
+            namespace=self.namespace, label_selector=f"crawl={self.crawl_id}"
         )
 
-        await self.apps_api.delete_namespaced_stateful_set(
-            name=self.crawl_id,
-            namespace=self.namespace,
-            propagation_policy="Foreground",
-        )
+        for statefulset in statefulsets.items:
+            print(f"Deleting service {statefulset.spec.service_name}")
+            await self.core_api.delete_namespaced_service(
+                name=statefulset.spec.service_name,
+                namespace=self.namespace,
+                propagation_policy="Foreground",
+            )
+
+            print(f"Deleting statefulset {statefulset.metadata.name}")
+            await self.apps_api.delete_namespaced_stateful_set(
+                name=statefulset.metadata.name,
+                namespace=self.namespace,
+                propagation_policy="Foreground",
+            )
 
         return True
-
-    async def exit_in(self, sec, status=0):
-        """ exit after delay """
-        await asyncio.sleep(sec)
-        sys.exit(status)
 
     async def scale_to(self, size):
         """ scale to "size" replicas """
@@ -244,12 +241,61 @@ class K8SCrawlJob:
         except:
             return None
 
+    async def exit_in(self, sec, status=0):
+        """ exit after delay """
+        await asyncio.sleep(sec)
+        sys.exit(status)
+
+    async def shutdown(self, graceful=False):
+        if self.shutdown_pending:
+            return
+
+        self.shutdown_pending = True
+
+        if not graceful:
+            pods = await self.core_api.list_namespaced_pod(
+                namespace=self.namespace,
+                label_selector=f"crawl={self.crawl_id},role=crawler",
+            )
+
+            await send_signal_to_pods(
+                self.core_api_ws,
+                self.namespace,
+                pods.items,
+                graceful,
+            )
+
+        await self.delete_crawl_objects()
+
+        self.shutdown_pending = False
+        if not graceful:
+            sys.exit(0)
+
 
 # ============================================================================
 @app.on_event("startup")
 async def startup():
     """init on startup"""
     job = K8SCrawlJob()
+
+    def sig_handler(sig, frame):
+        # gradual shutdown
+        if sig == signal.SIGINT:
+            print("got SIGINT, interrupting")
+            loop.create_task(job.shutdown(graceful=False))
+
+        elif sig == signal.SIGABRT:
+            print("got SIGABRT, aborting")
+            loop.create_task(job.shutdown(graceful=False))
+
+        elif sig == signal.SIGTERM:
+            print("got SIGTERM, shutting down")
+            if not job.shutdown_pending:
+                sys.exit(3)
+
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGABRT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
 
     @app.post("/scale/{size}")
     async def scale(size: int):

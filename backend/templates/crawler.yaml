@@ -2,32 +2,32 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ id }}
+  name: crawl-{{ id }}
   namespace: {{ namespace }}
+  labels:
+    crawl: {{ id }}
+    role: crawler
 
 spec:
   selector:
     matchLabels:
       crawl: {{ id }}
+      role: crawler
 
-  #ownerReferences:
-  #- apiVersion: batch/v1
-  #  blockOwnerDeletion: true
-  #  controller: true
-  #  kind: Job
-  #  name: {{ job_name }}
-  #  # uid
-
-  serviceName: {{ id }}
-  replicas: {{ crawler_workers }}
+  serviceName: crawl-{{ id }}
+  replicas: {{ scale }}
   podManagementPolicy: Parallel
   volumeClaimTemplates:
     - metadata:
         name: crawl-data
-        annotations:
-          helm.sh/resource-policy: keep
+        labels:
+          crawl: {{ id }}
+          role: crawler
 
       spec:
+        persistentVolumeClaimRetentionPolicy:
+          whenDeleted: Deleted
+          whenScaled: Delete
         accessModes:
           - ReadWriteOnce
 
@@ -43,6 +43,7 @@ spec:
     metadata:
       labels:
         crawl: {{ id }}
+        role: crawler
 
     spec:
       terminationGracePeriod: {{ termination_grace_secs }}
@@ -51,43 +52,6 @@ spec:
         - name: crawl-config
           configMap:
             name: crawl-config-{{ cid }}
-
-        - name: cluster-redis-conf
-          configMap:
-            name: shared-job-config
-            items:
-              - key: redis.conf
-                path: redis.conf
-
-        - name: redis-conf
-          emptyDir: {}
-
-      initContainers:
-        - name: init-redis
-          image: {{ redis_image }}
-          imagePullPolicy: {{ redis_image_pull_policy }}
-          command:
-            - bash
-            - "-c"
-            - |
-              set -ex
-              # if no ordinal found in hostname, something is wrong, exit
-              [[ `hostname` =~ (.+)-([0-9]+)$ ]] || exit 1
-              ordinal=${BASH_REMATCH[2]}
-              base=${BASH_REMATCH[1]}
-
-              # if ordinal is 0, use main config, otherwise use replica
-              cp /cluster-redis-conf/redis.conf /redis-conf/redis.conf
-              if [[ $ordinal -ne 0 ]]; then
-                echo "replicaof $base-0.$base 6379" >> /redis-conf/redis.conf
-              fi
-
-          volumeMounts:
-            - name: cluster-redis-conf
-              mountPath: /cluster-redis-conf
-
-            - name: redis-conf
-              mountPath: /redis-conf
 
       containers:
         - name: crawler
@@ -103,7 +67,6 @@ spec:
 
             - name: crawl-data
               mountPath: /crawls
-              subPath: crawls
 
           envFrom:
             - configMapRef:
@@ -154,17 +117,126 @@ spec:
             failureThreshold: 3
           {% endif %}
 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crawl-{{ id }}
+  labels:
+    crawl: {{ id }}
+    role: crawler
+ 
+spec:
+  clusterIP: None
+  selector:
+    crawl: {{ id }}
+    role: crawler
+
+  ports:
+    - protocol: TCP
+      port: 9037
+      name: screencast
+
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-{{ id }}
+  namespace: {{ namespace }}
+  labels:
+    crawl: {{ id }}
+    role: redis
+
+spec:
+  selector:
+    matchLabels:
+      crawl: {{ id }}
+      role: redis
+
+  serviceName: redis-{{ id }}
+  replicas: 1
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          crawl: {{ id }}
+          role: crawler
+
+      spec:
+        persistentVolumeClaimRetentionPolicy:
+          whenDeleted: Deleted
+          whenScaled: Delete
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: 1Gi
+
+      {% if volume_storage_class %}
+      storageClassName: {{ volume_storage_class }}
+      {% endif %}
+
+  template:
+    metadata:
+      labels:
+        crawl: {{ id }}
+        role: redis
+
+    spec:
+      terminationGracePeriod: 10
+      #nodeSelector: {{ crawl_node_selector }}
+      volumes:
+        - name: shared-redis-conf
+          configMap:
+            name: shared-job-config
+            items:
+              - key: redis.conf
+                path: redis.conf
+
+      #  - name: redis-conf
+      #    emptyDir: {}
+
+      #initContainers:
+      #  - name: init-redis
+      #    image: {{ redis_image }}
+      #    imagePullPolicy: {{ redis_image_pull_policy }}
+      #    command:
+      #      - bash
+      #      - "-c"
+      #      - |
+      #        set -ex
+      #        # if no ordinal found in hostname, something is wrong, exit
+      #        [[ `hostname` =~ (.+)-([0-9]+)$ ]] || exit 1
+      #        ordinal=${BASH_REMATCH[2]}
+      #        base=${BASH_REMATCH[1]}
+
+      #        # if ordinal is 0, use main config, otherwise use replica
+      #        cp /shared-redis-conf/redis.conf /redis-conf/redis.conf
+      #        if [[ $ordinal -ne 0 ]]; then
+      #          echo "replicaof $base-0.$base 6379" >> /redis-conf/redis.conf
+      #        fi
+
+      #    volumeMounts:
+      #      - name: shared-redis-conf
+      #        mountPath: /shared-redis-conf
+
+      #      - name: redis-conf
+      #        mountPath: /redis-conf
+
+      containers:
         - name: redis
           image: {{ redis_image }}
           imagePullPolicy: {{ redis_image_pull_policy }}
 
           args: ["/redis-conf/redis.conf", "--appendonly", "yes"]
           volumeMounts:
-            - name: crawl-data
+            - name: redis-data
               mountPath: /data
-              subPath: redis
 
-            - name: redis-conf
+            - name: shared-redis-conf
               mountPath: /redis-conf
 
           resources:
@@ -186,9 +258,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ id }}
+  name: redis-{{ id }}
   labels:
     crawl: {{ id }}
+    role: redis
  
 spec:
   clusterIP: None
@@ -196,10 +269,6 @@ spec:
     crawl: {{ id }}
 
   ports:
-    - protocol: TCP
-      port: 9037
-      name: screencast
-
     - protocol: TCP
       port: 6379
       name: redis

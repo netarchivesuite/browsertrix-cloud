@@ -99,7 +99,6 @@ data:
 
     crawler_liveness_port: "{{ .Values.crawler_liveness_port | default 0 }}"
 
-    crawler_workers: 2
     crawler_node_type: crawling
 
   redis.conf: |

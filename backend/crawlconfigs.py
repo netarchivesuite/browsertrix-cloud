@@ -533,7 +533,9 @@ def init_crawl_config_api(
 
         crawl_id = None
         try:
-            crawl_id = await crawl_manager.run_crawl_config(cid, userid=str(user.id))
+            crawl_id = await crawl_manager.run_crawl_config(
+                crawlconfig, userid=str(user.id)
+            )
         except Exception as e:
             # pylint: disable=raise-missing-from
             raise HTTPException(status_code=500, detail=f"Error starting crawl: {e}")

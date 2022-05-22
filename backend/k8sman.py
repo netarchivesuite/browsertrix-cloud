@@ -7,6 +7,7 @@ import asyncio
 import base64
 from redis import asyncio as aioredis
 
+import yaml
 
 from kubernetes_asyncio import client, config, watch
 from kubernetes_asyncio.stream import WsApiClient
@@ -14,7 +15,7 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi.templating import Jinja2Templates
 
-from utils import create_from_yaml
+from utils import create_from_yaml, send_signal_to_pods
 from archives import S3Storage
 from crawls import Crawl, CrawlOut, CrawlFile
 
@@ -202,36 +203,64 @@ class K8SManager:
             storage_name = str(crawlconfig.aid)
             storage_path = ""
 
-        labels = {
-            "btrix.user": str(crawlconfig.userid),
-            "btrix.archive": str(crawlconfig.aid),
-            "btrix.crawlconfig": str(crawlconfig.id),
-        }
-
         await self.check_storage(storage_name)
 
         # Create Config Map
-        config_map = self._create_config_map(
-            crawlconfig, labels, STORE_PATH=storage_path, STORE_FILENAME=out_filename
+        await self._create_config_map(
+            crawlconfig,
+            STORE_PATH=storage_path,
+            STORE_FILENAME=out_filename,
+            STORE_NAME=storage_name,
+            USER_ID=str(crawlconfig.userid),
+            ARCHIVE_ID=str(crawlconfig.aid),
+            CRAWL_CONFIG_ID=str(crawlconfig.id),
+            INITIAL_SCALE=str(crawlconfig.scale),
         )
 
-        # Create Cron Job
-        await self.core_api.create_namespaced_config_map(
-            namespace=self.namespace, body=config_map
-        )
+        await self._create_job(crawlconfig, run_now=run_now)
+
+    async def _create_job(self, crawlconfig, run_now=True):
+        cid = str(crawlconfig.id)
 
         params = {
-            "cid": str(crawlconfig.id),
+            "cid": cid,
             "userid": str(crawlconfig.userid),
             "aid": str(crawlconfig.aid),
             "job_image": os.environ.get("JOB_IMAGE"),
-            "namespace": self.namespace,
-            "storage_name": storage_name,
         }
+
+        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        params["job_name"] = f"job-manual-{ts_now}-{cid[:12]}"
 
         data = self.templates.env.get_template("job.yaml").render(params)
 
-        await create_from_yaml(self.api_client, data, namespace=self.namespace)
+        if run_now:
+            # create job directly
+            await create_from_yaml(self.api_client, data, namespace=self.namespace)
+
+        if crawlconfig.schedule:
+            job_yaml = yaml.safe_load(data)
+            job_template = job_yaml["spec"]
+            metadata = job_yaml["metadata"]
+            metadata["name"] = f"job-scheduled-{cid}"
+            metadata["annotations"]["btrix.run.manual"] = "0"
+
+            spec = client.V1beta1CronJobSpec(
+                schedule=crawlconfig.schedule,
+                suspend=False,
+                concurrency_policy="Forbid",
+                successful_jobs_history_limit=2,
+                failed_jobs_history_limit=3,
+                job_template=job_template,
+            )
+
+            cron_job = client.V1beta1CronJob(metadata=metadata, spec=spec)
+
+            await self.batch_beta_api.create_namespaced_cron_job(
+                namespace=self.namespace, body=cron_job
+            )
+
+        return params["job_name"]
 
     async def add_crawl_config_2(
         self,
@@ -270,12 +299,7 @@ class K8SManager:
         await self.check_storage(storage_name)
 
         # Create Config Map
-        config_map = self._create_config_map(crawlconfig, labels)
-
-        # Create Cron Job
-        await self.core_api.create_namespaced_config_map(
-            namespace=self.namespace, body=config_map
-        )
+        await self._create_config_map(crawlconfig)
 
         suspend, schedule = self._get_schedule_suspend_run_now(crawlconfig)
 
@@ -355,7 +379,13 @@ class K8SManager:
                 name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
             )
 
-    async def run_crawl_config(self, cid, userid=None):
+    async def run_crawl_config(self, crawlconfig, userid=None):
+        """Run crawl job for cron job based on specified crawlconfig
+        optionally set different user"""
+
+        return await self._create_job(crawlconfig, run_now=True)
+
+    async def run_crawl_config_2(self, cid, userid=None):
         """Run crawl job for cron job based on specified crawlconfig id (cid)
         optionally set different user"""
         cron_jobs = await self.batch_beta_api.list_namespaced_cron_job(
@@ -524,20 +554,28 @@ class K8SManager:
 
         result = None
 
-        if not graceful:
-            pods = await self.core_api.list_namespaced_pod(
-                namespace=self.namespace,
-                label_selector=f"job-name={job_name},btrix.archive={aid}",
-            )
+        pods = await self.core_api.list_namespaced_pod(
+            namespace=self.namespace,
+            label_selector=f"job-name={job_name},btrix.archive={aid}",
+        )
 
-            await self._send_sig_to_pods(pods.items, aid)
+        print("num", len(pods.items))
 
-            result = self._make_crawl_for_job(job, "canceled", True)
-            await self.redis.setex(f"{job_name}:stop", 300, "canceled")
-        else:
+        await send_signal_to_pods(
+            self.core_api_ws,
+            self.namespace,
+            pods.items,
+            graceful,
+            #lambda meta: meta.labels["btrix.archive"] == aid,
+        )
+
+        result = self._make_crawl_for_job(job, "canceled", True)
+        await self.redis.setex(f"{job_name}:stop", 300, "canceled")
+
+        if graceful:
             result = True
 
-        await self._delete_job(job_name)
+        #await self._delete_job(job_name)
 
         return result
 
@@ -720,7 +758,7 @@ class K8SManager:
             manual=job.metadata.annotations.get("btrix.run.manual") == "1",
             started=job.status.start_time.replace(tzinfo=None),
             watchIPs=watch_ips or [],
-            colls=json.loads(job.metadata.annotations.get("btrix.colls", [])),
+            # colls=json.loads(job.metadata.annotations.get("btrix.colls", [])),
             finished=datetime.datetime.utcnow().replace(microsecond=0, tzinfo=None)
             if finish_now
             else None,
@@ -734,8 +772,8 @@ class K8SManager:
             propagation_policy="Foreground",
         )
 
-    def _create_config_map(self, crawlconfig, labels, **kwargs):
-        """ Create Config Map based on CrawlConfig + labels """
+    async def _create_config_map(self, crawlconfig, **kwargs):
+        """ Create Config Map based on CrawlConfig """
         data = kwargs
         data["crawl-config.json"] = json.dumps(crawlconfig.get_raw_config())
 
@@ -743,12 +781,14 @@ class K8SManager:
             metadata={
                 "name": f"crawl-config-{crawlconfig.id}",
                 "namespace": self.namespace,
-                "labels": labels,
+                # "labels": labels,
             },
             data=data,
         )
 
-        return config_map
+        return await self.core_api.create_namespaced_config_map(
+            namespace=self.namespace, body=config_map
+        )
 
     # pylint: disable=unused-argument
     async def _get_storage_secret(self, storage_name):
@@ -777,29 +817,6 @@ class K8SManager:
             suspend = True
 
         return suspend, schedule
-
-    async def _send_sig_to_pods(self, pods, aid):
-        command = ["kill", "-s", "SIGABRT", "1"]
-        interrupted = False
-
-        try:
-            for pod in pods:
-                if pod.metadata.labels["btrix.archive"] != aid:
-                    continue
-
-                await self.core_api_ws.connect_get_namespaced_pod_exec(
-                    pod.metadata.name,
-                    namespace=self.namespace,
-                    command=command,
-                    stdout=True,
-                )
-                interrupted = True
-
-        # pylint: disable=broad-except
-        except Exception as exc:
-            print(f"Exec Error: {exc}")
-
-        return interrupted
 
     async def _delete_crawl_configs(self, label):
         """Delete Crawl Cron Job and all dependent resources, including configmap and secrets"""
