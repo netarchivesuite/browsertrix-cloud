@@ -180,6 +180,7 @@ class CrawlConfigOps:
         self.crawl_manager = crawl_manager
         self.profiles = profiles
         self.profiles.set_crawlconfigs(self)
+        self.crawl_ops = None
 
         self.router = APIRouter(
             prefix="/crawlconfigs",
@@ -191,6 +192,10 @@ class CrawlConfigOps:
         self._file_rx = re.compile("\\W+")
 
         asyncio.create_task(self.init_index())
+
+    def set_crawl_ops(self, ops):
+        """ set crawl ops reference """
+        self.crawl_ops = ops
 
     async def init_index(self):
         """ init index for crawls db """
@@ -342,7 +347,8 @@ class CrawlConfigOps:
 
         results = await cursor.to_list(length=1000)
 
-        crawls = await self.crawl_manager.list_running_crawls(aid=archive.id)
+        # crawls = await self.crawl_manager.list_running_crawls(aid=archive.id)
+        crawls = await self.crawl_ops.list_crawls(archive=archive, running_only=True)
 
         running = {}
         for crawl in crawls:
@@ -373,7 +379,10 @@ class CrawlConfigOps:
 
     async def get_running_crawl(self, crawlconfig: CrawlConfig):
         """ Return the id of currently running crawl for this config, if any """
-        crawls = await self.crawl_manager.list_running_crawls(cid=crawlconfig.id)
+        # crawls = await self.crawl_manager.list_running_crawls(cid=crawlconfig.id)
+        crawls = await self.crawl_ops.list_crawls(cid=crawlconfig.id, running_only=True)
+        print("crawls", crawls)
+
         if len(crawls) == 1:
             return crawls[0].id
 

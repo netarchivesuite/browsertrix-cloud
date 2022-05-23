@@ -56,7 +56,7 @@ metadata:
 data:
   #CRAWL_ARGS: "{{ .Values.crawler_args }} --redisStoreUrl {{ .Values.redis_url }}"
   CRAWL_ARGS: "{{ .Values.crawler_args }}"
-  WEBHOOK_URL: "{{ .Values.redis_url }}/crawls-done"
+  #WEBHOOK_URL: "{{ .Values.redis_url }}/crawls-done"
 
 
 ---

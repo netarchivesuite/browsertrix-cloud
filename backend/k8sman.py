@@ -3,9 +3,8 @@
 import os
 import datetime
 import json
-import asyncio
 import base64
-from redis import asyncio as aioredis
+import asyncio
 
 import yaml
 
@@ -17,7 +16,6 @@ from fastapi.templating import Jinja2Templates
 
 from utils import create_from_yaml, send_signal_to_pods
 from archives import S3Storage
-from crawls import Crawl, CrawlOut, CrawlFile
 
 
 # ============================================================================
@@ -59,8 +57,6 @@ class K8SManager:
 
         self.grace_period = int(os.environ.get("GRACE_PERIOD_SECS", "600"))
 
-        self.redis_url = os.environ["REDIS_URL"]
-
         self.requests_cpu = os.environ["CRAWLER_REQUESTS_CPU"]
         self.limits_cpu = os.environ["CRAWLER_LIMITS_CPU"]
         self.requests_mem = os.environ["CRAWLER_REQUESTS_MEM"]
@@ -84,13 +80,6 @@ class K8SManager:
 
         self.loop = asyncio.get_running_loop()
         self.loop.create_task(self.run_event_loop())
-        self.loop.create_task(self.init_redis(self.redis_url))
-
-    async def init_redis(self, redis_url):
-        """ init redis async """
-        self.redis = await aioredis.from_url(
-            redis_url, encoding="utf-8", decode_responses=True
-        )
 
     def set_crawl_ops(self, ops):
         """ Set crawl ops handler """
@@ -116,18 +105,7 @@ class K8SManager:
             async for event in stream:
                 try:
                     obj = event["object"]
-                    if obj.reason == "BackoffLimitExceeded":
-                        self.loop.create_task(
-                            self.handle_crawl_failed(obj.involved_object.name, "failed")
-                        )
-
-                    elif obj.reason == "DeadlineExceeded":
-                        self.loop.create_task(
-                            self.handle_crawl_failed(
-                                obj.involved_object.name, "timed_out"
-                            )
-                        )
-                    elif obj.reason == "Completed":
+                    if obj.reason == "Completed":
                         self.loop.create_task(
                             self.handle_completed_job(obj.involved_object.name)
                         )
@@ -217,132 +195,90 @@ class K8SManager:
             INITIAL_SCALE=str(crawlconfig.scale),
         )
 
-        await self._create_job(crawlconfig, run_now=run_now)
+        if run_now:
+            crawlconfig.currCrawlId = await self._create_manual_job(crawlconfig)
 
-    async def _create_job(self, crawlconfig, run_now=True):
+    async def _create_manual_job(self, crawlconfig):
         cid = str(crawlconfig.id)
+        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        crawl_id = f"manual-{ts_now}-{cid[:12]}"
 
         params = {
             "cid": cid,
             "userid": str(crawlconfig.userid),
             "aid": str(crawlconfig.aid),
             "job_image": os.environ.get("JOB_IMAGE"),
+            "job_name": "job-" + crawl_id,
+            "manual": "1",
         }
-
-        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        params["job_name"] = f"job-manual-{ts_now}-{cid[:12]}"
 
         data = self.templates.env.get_template("job.yaml").render(params)
 
-        if run_now:
-            # create job directly
-            await create_from_yaml(self.api_client, data, namespace=self.namespace)
+        # create job directly
+        await create_from_yaml(self.api_client, data, namespace=self.namespace)
 
-        if crawlconfig.schedule:
-            job_yaml = yaml.safe_load(data)
-            job_template = job_yaml["spec"]
-            metadata = job_yaml["metadata"]
-            metadata["name"] = f"job-scheduled-{cid}"
-            metadata["annotations"]["btrix.run.manual"] = "0"
+        return crawl_id
 
-            spec = client.V1beta1CronJobSpec(
-                schedule=crawlconfig.schedule,
-                suspend=False,
-                concurrency_policy="Forbid",
-                successful_jobs_history_limit=2,
-                failed_jobs_history_limit=3,
-                job_template=job_template,
-            )
-
-            cron_job = client.V1beta1CronJob(metadata=metadata, spec=spec)
-
-            await self.batch_beta_api.create_namespaced_cron_job(
-                namespace=self.namespace, body=cron_job
-            )
-
-        return params["job_name"]
-
-    async def add_crawl_config_2(
-        self,
-        crawlconfig,
-        storage,
-        run_now,
-        out_filename,
-        profile_filename,
-    ):
-        """add new crawl as cron job, store crawl config in configmap"""
+    async def _create_scheduled_job(self, crawlconfig):
+        """ create or remove cron job based on crawlconfig schedule """
         cid = str(crawlconfig.id)
-        userid = str(crawlconfig.userid)
-        aid = str(crawlconfig.aid)
 
-        annotations = {
-            "btrix.run.schedule": crawlconfig.schedule,
-            "btrix.storage_name": storage.name,
-            "btrix.colls": json.dumps(crawlconfig.colls),
-        }
-
-        # Configure Annotations + Labels
-        if storage.type == "default":
-            storage_name = storage.name
-            storage_path = storage.path
-            annotations["btrix.def_storage_path"] = storage_path
-        else:
-            storage_name = aid
-            storage_path = ""
-
-        labels = {
-            "btrix.user": userid,
-            "btrix.archive": aid,
-            "btrix.crawlconfig": cid,
-        }
-
-        await self.check_storage(storage_name)
-
-        # Create Config Map
-        await self._create_config_map(crawlconfig)
-
-        suspend, schedule = self._get_schedule_suspend_run_now(crawlconfig)
-
-        job_template = self._get_job_template(
-            cid,
-            storage_name,
-            storage_path,
-            labels,
-            annotations,
-            out_filename,
-            crawlconfig.crawlTimeout,
-            crawlconfig.scale,
-            profile_filename,
+        cron_jobs = await self.batch_beta_api.list_namespaced_cron_job(
+            namespace=self.namespace, label_selector=f"btrix.crawlconfig={cid}"
         )
 
+        cron_job = None
+
+        if len(cron_jobs.items) == 1:
+            cron_job = cron_jobs.items[0]
+
+        if cron_job:
+            if crawlconfig.schedule and crawlconfig.schedule != cron_job.spec.schedule:
+                cron_job.spec.schedule = crawlconfig.schedule
+                await self.batch_beta_api.patch_namespaced_cron_job(
+                    name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
+                )
+
+            if not crawlconfig.schedule:
+                await self.batch_beta_api.delete_namespaced_cron_job(
+                    name=cron_job.metadata.name, namespace=self.namespace
+                )
+
+            return
+
+        if not crawlconfig.schedule:
+            return
+
+        # create new cronjob
+        params = {
+            "cid": cid,
+            "userid": str(crawlconfig.userid),
+            "aid": str(crawlconfig.aid),
+            "job_image": os.environ.get("JOB_IMAGE"),
+            "job_name": f"job-scheduled-{cid}",
+            "manual": "0",
+        }
+
+        data = self.templates.env.get_template("job.yaml").render(params)
+
+        job_yaml = yaml.safe_load(data)
+        job_template = job_yaml["spec"]
+        metadata = job_yaml["metadata"]
+
         spec = client.V1beta1CronJobSpec(
-            schedule=schedule,
-            suspend=suspend,
+            schedule=crawlconfig.schedule,
+            suspend=False,
             concurrency_policy="Forbid",
             successful_jobs_history_limit=2,
             failed_jobs_history_limit=3,
             job_template=job_template,
         )
 
-        cron_job = client.V1beta1CronJob(
-            metadata={
-                "name": f"crawl-scheduled-{cid}",
-                "namespace": self.namespace,
-                "labels": labels,
-            },
-            spec=spec,
-        )
+        cron_job = client.V1beta1CronJob(metadata=metadata, spec=spec)
 
-        cron_job = await self.batch_beta_api.create_namespaced_cron_job(
+        await self.batch_beta_api.create_namespaced_cron_job(
             namespace=self.namespace, body=cron_job
         )
-
-        # Run Job Now
-        if run_now:
-            new_job = await self._create_run_now_job(cron_job)
-            return new_job.metadata.name
-
-        return ""
 
     async def update_crawl_schedule_or_scale(self, cid, schedule=None, scale=None):
         """ Update the schedule or scale for existing crawl config """
@@ -383,93 +319,7 @@ class K8SManager:
         """Run crawl job for cron job based on specified crawlconfig
         optionally set different user"""
 
-        return await self._create_job(crawlconfig, run_now=True)
-
-    async def run_crawl_config_2(self, cid, userid=None):
-        """Run crawl job for cron job based on specified crawlconfig id (cid)
-        optionally set different user"""
-        cron_jobs = await self.batch_beta_api.list_namespaced_cron_job(
-            namespace=self.namespace, label_selector=f"btrix.crawlconfig={cid}"
-        )
-
-        if len(cron_jobs.items) != 1:
-            raise Exception("Crawl Config Not Found")
-
-        res = await self._create_run_now_job(cron_jobs.items[0])
-        return res.metadata.name
-
-    async def list_running_crawls(self, cid=None, aid=None, userid=None):
-        """ Return a list of running crawls """
-        filters = []
-        if cid:
-            filters.append(f"btrix.crawlconfig={cid}")
-        else:
-            filters.append("btrix.crawlconfig")
-
-        if aid:
-            filters.append(f"btrix.archive={aid}")
-
-        if userid:
-            filters.append(f"btrix.user={userid}")
-
-        jobs = await self.batch_api.list_namespaced_job(
-            namespace=self.namespace,
-            label_selector=",".join(filters),
-            field_selector="status.successful=0",
-        )
-
-        crawls = []
-
-        for job in jobs.items:
-            status = await self._get_crawl_state(job)
-            if not status:
-                continue
-
-            crawls.append(self._make_crawl_for_job(job, status, False, CrawlOut))
-
-        return crawls
-
-    async def process_crawl_complete(self, crawlcomplete):
-        """Ensure the crawlcomplete data is valid (job exists and user matches)
-        Fill in additional details about the crawl"""
-        job = await self.batch_api.read_namespaced_job(
-            name=crawlcomplete.id, namespace=self.namespace
-        )
-
-        if not job:  # or job.metadata.labels["btrix.user"] != crawlcomplete.user:
-            return None, None
-
-        manual = job.metadata.annotations.get("btrix.run.manual") == "1"
-        if manual and not self.no_delete_jobs and crawlcomplete.completed:
-            self.loop.create_task(self._delete_job(job.metadata.name))
-
-        crawl = self._make_crawl_for_job(
-            job,
-            "complete" if crawlcomplete.completed else "partial_complete",
-            finish_now=True,
-        )
-
-        storage_path = job.metadata.annotations.get("btrix.def_storage_path")
-        inx = None
-        filename = None
-        storage_name = None
-        if storage_path:
-            inx = crawlcomplete.filename.index(storage_path)
-            filename = (
-                crawlcomplete.filename[inx:] if inx > 0 else crawlcomplete.filename
-            )
-            storage_name = job.metadata.annotations.get("btrix.storage_name")
-
-        def_storage_name = storage_name if inx else None
-
-        crawl_file = CrawlFile(
-            def_storage_name=def_storage_name,
-            filename=filename or crawlcomplete.filename,
-            size=crawlcomplete.size,
-            hash=crawlcomplete.hash,
-        )
-
-        return crawl, crawl_file
+        return await self._create_manual_job(crawlconfig)
 
     async def get_default_storage_access_endpoint(self, name):
         """ Get access_endpoint for default storage """
@@ -503,81 +353,36 @@ class K8SManager:
         """ decode secret data """
         return base64.standard_b64decode(secret.data[name]).decode()
 
-    async def get_running_crawl(self, name, aid):
-        """Get running crawl (job) with given name, or none
-        if not found/not running"""
-        try:
-            job = await self.batch_api.read_namespaced_job(
-                name=name, namespace=self.namespace
-            )
-
-            label_selector = f"job-name={name}"
-            if aid:
-                if not job or job.metadata.labels["btrix.archive"] != aid:
-                    return None
-                label_selector += f",btrix.archive={aid}"
-
-            status = await self._get_crawl_state(job)
-            if not status:
-                return None
-
-            pods = await self.core_api.list_namespaced_pod(
-                namespace=self.namespace, label_selector=label_selector
-            )
-
-            watch_ips = [pod.status.pod_ip for pod in pods.items if pod.status.pod_ip]
-
-            if status == "running" and not watch_ips:
-                status = "starting"
-
-            return self._make_crawl_for_job(job, status, False, CrawlOut, watch_ips)
-
-        # pylint: disable=broad-except
-        except Exception:
-            pass
-
-        return None
-
-    async def stop_crawl(self, job_name, aid, graceful=True):
+    async def stop_crawl(self, crawl_id, aid, graceful=True):
         """Attempt to stop crawl, either gracefully by issuing a SIGTERM which
         will attempt to finish current pages
 
         OR, abruptly by first issueing a SIGABRT, followed by SIGTERM, which
         will terminate immediately"""
 
+        job_name = f"job-{crawl_id}"
+
         job = await self.batch_api.read_namespaced_job(
             name=job_name, namespace=self.namespace
         )
 
         if not job or job.metadata.labels["btrix.archive"] != aid:
-            return None
-
-        result = None
+            return False
 
         pods = await self.core_api.list_namespaced_pod(
             namespace=self.namespace,
             label_selector=f"job-name={job_name},btrix.archive={aid}",
         )
 
-        print("num", len(pods.items))
-
         await send_signal_to_pods(
             self.core_api_ws,
             self.namespace,
             pods.items,
             graceful,
-            #lambda meta: meta.labels["btrix.archive"] == aid,
+            # lambda meta: meta.labels["btrix.archive"] == aid,
         )
 
-        result = self._make_crawl_for_job(job, "canceled", True)
-        await self.redis.setex(f"{job_name}:stop", 300, "canceled")
-
-        if graceful:
-            result = True
-
-        #await self._delete_job(job_name)
-
-        return result
+        return True
 
     async def scale_crawl(self, job_name, aid, parallelism=1):
         """ Set the crawl scale (job parallelism) on the specified job """
@@ -609,44 +414,23 @@ class K8SManager:
         """Delete all crawl configs by id"""
         return await self._delete_crawl_configs(f"btrix.crawlconfig={cid}")
 
-    async def handle_crawl_failed(self, job_name, reason):
-        """ Handle failed crawl job, add to db and then delete """
-        try:
-            job = await self.batch_api.read_namespaced_job(
-                name=job_name, namespace=self.namespace
-            )
-        # pylint: disable=bare-except
-        except:
-            print("Job Failure Already Handled")
-            return
-
-        # don't do anything here if not a crawl job
-        if not job.metadata.labels.get("btrix.crawlconfig"):
-            return
-
-        crawl = self._make_crawl_for_job(job, reason, True)
-
-        # if update succeeds, than crawl has not completed, so likely a failure
-        failure = await self.crawl_ops.store_crawl(crawl)
-
-        # keep failed jobs around, for now
-        if not failure and not self.no_delete_jobs:
-            await self._delete_job(job_name)
-
     async def handle_completed_job(self, job_name):
-        """ Handle completed job: if profile browser, delete """
-        try:
-            job = await self.batch_api.read_namespaced_job(
-                name=job_name, namespace=self.namespace
-            )
+        """ Handle completed job: delete """
+        # until ttl controller is ready
+        await self._delete_job(job_name)
+
+        # try:
+        #    job = await self.batch_api.read_namespaced_job(
+        #        name=job_name, namespace=self.namespace
+        #    )
         # pylint: disable=bare-except
-        except:
-            return False
+        # except:
+        #    return False
 
         # delete job if profile browser job
-        if job.metadata.labels.get("btrix.profile"):
-            await self._delete_job(job_name)
-            return True
+        # if job.metadata.labels.get("btrix.profile"):
+        #   await self._delete_job(job_name)
+        #    return True
 
     async def run_profile_browser(
         self, userid, aid, command, storage=None, storage_name=None, baseprofile=None
@@ -723,46 +507,6 @@ class K8SManager:
 
     # ========================================================================
     # Internal Methods
-
-    async def _get_crawl_state(self, job):
-        if job.status.active:
-            return "running"
-
-        # not all pods have succeeded yet
-        finished = (job.status.succeeded or 0) + (job.status.failed or 0)
-        total = job.spec.parallelism or 1
-        if finished != total:
-            # don't return anything if marked as cancel
-            if await self.redis.get(f"{job.metadata.name}:stop") != "canceled":
-                return "stopping"
-
-        # job fully done, do not treat as running or stopping
-        if finished >= total:
-            return "partial_complete"
-
-        return None
-
-    # pylint: disable=no-self-use
-    def _make_crawl_for_job(
-        self, job, state, finish_now=False, crawl_cls=Crawl, watch_ips=None
-    ):
-        """ Make a crawl object from a job"""
-        return crawl_cls(
-            id=job.metadata.name,
-            state=state,
-            scale=job.spec.parallelism or 1,
-            userid=job.metadata.labels["btrix.user"],
-            aid=job.metadata.labels["btrix.archive"],
-            cid=job.metadata.labels["btrix.crawlconfig"],
-            # schedule=job.metadata.annotations.get("btrix.run.schedule", ""),
-            manual=job.metadata.annotations.get("btrix.run.manual") == "1",
-            started=job.status.start_time.replace(tzinfo=None),
-            watchIPs=watch_ips or [],
-            # colls=json.loads(job.metadata.annotations.get("btrix.colls", [])),
-            finished=datetime.datetime.utcnow().replace(microsecond=0, tzinfo=None)
-            if finish_now
-            else None,
-        )
 
     async def _delete_job(self, name):
         await self.batch_api.delete_namespaced_job(

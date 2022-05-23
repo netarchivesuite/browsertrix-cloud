@@ -79,11 +79,8 @@ spec:
             - name: CRAWL_ID
               value: {{ id }}
 
-            - name: REDIS_URL
-              value: {{ redis_url }}
-
-            - name: NO_LAUNCH_REDIS
-              value: "1"
+            - name: WEBHOOK_URL
+              value: {{ redis_url }}/crawls-done
 
             - name: STORE_PATH
               valueFrom:
@@ -96,6 +93,12 @@ spec:
                 configMapKeyRef:
                   name: crawl-config-{{ cid }}
                   key: STORE_FILENAME
+
+            - name: STORE_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: crawl-config-{{ cid }}
+                  key: USER_ID
 
           resources:
             limits:
