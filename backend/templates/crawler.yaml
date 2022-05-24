@@ -49,7 +49,7 @@ spec:
         role: redis
 
     spec:
-      terminationGracePeriod: 10
+      terminationGracePeriodSeconds: 10
       #nodeSelector: {{ crawl_node_selector }}
       volumes:
         - name: shared-redis-conf
@@ -130,6 +130,7 @@ spec:
   clusterIP: None
   selector:
     crawl: {{ id }}
+    role: redis
 
   ports:
     - protocol: TCP
@@ -187,7 +188,7 @@ spec:
         role: crawler
 
     spec:
-      terminationGracePeriod: {{ termination_grace_secs }}
+      terminationGracePeriodSeconds: {{ termination_grace_secs }}
       #nodeSelector: {{ crawl_node_selector }}
       volumes:
         - name: crawl-config

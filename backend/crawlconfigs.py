@@ -284,18 +284,6 @@ class CrawlConfigOps:
         if len(query) == 0:
             raise HTTPException(status_code=400, detail="no_update_data")
 
-        # update schedule in crawl manager first
-        if update.schedule is not None or update.scale is not None:
-            try:
-                await self.crawl_manager.update_crawl_schedule_or_scale(
-                    str(cid), update.schedule, update.scale
-                )
-            except Exception:
-                # pylint: disable=raise-missing-from
-                raise HTTPException(
-                    status_code=404, detail=f"Crawl Config '{cid}' not found"
-                )
-
         if update.profileid is not None:
             # if empty string, set to none, remove profile association
             if update.profileid == "":
@@ -306,12 +294,27 @@ class CrawlConfigOps:
                 ).id
 
         # update in db
-        if not await self.crawl_configs.find_one_and_update(
+        result = await self.crawl_configs.find_one_and_update(
             {"_id": cid, "inactive": {"$ne": True}}, {"$set": query}
-        ):
+        )
+
+        if not result:
             raise HTTPException(
                 status_code=404, detail=f"Crawl Config '{cid}' not found"
             )
+
+        # update schedule in crawl manager first
+        if update.schedule is not None or update.scale is not None:
+            crawlconfig = CrawlConfig.from_dict(result)
+            try:
+                await self.crawl_manager.update_crawl_schedule_or_scale(
+                    crawlconfig, update.scale, update.schedule
+                )
+            except Exception:
+                # pylint: disable=raise-missing-from
+                raise HTTPException(
+                    status_code=404, detail=f"Crawl Config '{cid}' not found"
+                )
 
         return {"success": True}
 

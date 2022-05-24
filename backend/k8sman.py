@@ -201,6 +201,8 @@ class K8SManager:
         if run_now:
             crawl_id = await self._create_manual_job(crawlconfig)
 
+        await self._update_scheduled_job(crawlconfig)
+
         return crawl_id
 
     async def _create_manual_job(self, crawlconfig):
@@ -224,7 +226,7 @@ class K8SManager:
 
         return crawl_id
 
-    async def _create_scheduled_job(self, crawlconfig):
+    async def _update_scheduled_job(self, crawlconfig):
         """ create or remove cron job based on crawlconfig schedule """
         cid = str(crawlconfig.id)
 
@@ -285,40 +287,26 @@ class K8SManager:
             namespace=self.namespace, body=cron_job
         )
 
-    async def update_crawl_schedule_or_scale(self, cid, schedule=None, scale=None):
+    async def update_crawl_schedule_or_scale(
+        self, crawlconfig, scale=None, schedule=None
+    ):
         """ Update the schedule or scale for existing crawl config """
 
-        cron_jobs = await self.batch_beta_api.list_namespaced_cron_job(
-            namespace=self.namespace, label_selector=f"btrix.crawlconfig={cid}"
-        )
-
-        if len(cron_jobs.items) != 1:
-            return
-
-        cron_job = cron_jobs.items[0]
-
-        updated = False
-
         if schedule is not None:
-            real_schedule = schedule or DEFAULT_NO_SCHEDULE
-
-            if real_schedule != cron_job.spec.schedule:
-                cron_job.spec.schedule = real_schedule
-                cron_job.spec.suspend = not schedule
-
-                cron_job.spec.job_template.metadata.annotations[
-                    "btrix.run.schedule"
-                ] = schedule
-            updated = True
+            await self._update_scheduled_job(crawlconfig)
 
         if scale is not None:
-            cron_job.spec.job_template.spec.parallelism = scale
-            updated = True
-
-        if updated:
-            await self.batch_beta_api.patch_namespaced_cron_job(
-                name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
+            config_map = await self.core_api.read_namespaced_config_map(
+                name=f"crawl-config-{crawlconfig.id}", namespace=self.namespace
             )
+
+            config_map.data["INITIAL_SCALE"] = str(scale)
+
+            await self.core_api.patch_namespaced_config_map(
+                name=config_map.metadata.name, namespace=self.namespace, body=config_map
+            )
+
+        return True
 
     async def run_crawl_config(self, crawlconfig, userid=None):
         """Run crawl job for cron job based on specified crawlconfig
@@ -365,13 +353,13 @@ class K8SManager:
         OR, abruptly by first issueing a SIGABRT, followed by SIGTERM, which
         will terminate immediately"""
         return await self._post_to_job_pods(
-            crawl_id, aid, "/cancel" if not graceful else "/stop", {}
+            crawl_id, aid, "/cancel" if not graceful else "/stop"
         )
 
     async def scale_crawl(self, crawl_id, aid, scale=1):
         """ Set the crawl scale (job parallelism) on the specified job """
 
-        return await self._post_to_job_pods(crawl_id, aid, "/scale", {"scale": scale})
+        return await self._post_to_job_pods(crawl_id, aid, f"/scale/{scale}")
 
     async def delete_crawl_configs_for_archive(self, archive):
         """Delete all crawl configs for given archive"""
@@ -389,6 +377,7 @@ class K8SManager:
 
         try:
             await self._delete_job(job_name)
+        # pylint: disable=bare-except
         except:
             pass
 

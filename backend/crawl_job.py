@@ -2,13 +2,10 @@
 
 import os
 import asyncio
-import json
 import sys
 import signal
 
 import yaml
-
-from redis import asyncio as aioredis
 
 from kubernetes_asyncio import client, config
 from kubernetes_asyncio.stream import WsApiClient
@@ -38,12 +35,7 @@ class K8SCrawlJob:
         if self.crawl_id.startswith("job-"):
             self.crawl_id = self.crawl_id[4:]
 
-        self.crawl_updater = CrawlUpdater(self.crawl_id)
-
-        self.crawls_done_key = "crawls-done"
-
-        self.initial_scale = os.environ.get("INITIAL_SCALE") or "1"
-        self.scale = int(self.initial_scale)
+        self.crawl_updater = CrawlUpdater(self.crawl_id, self)
 
         self.api_client = ApiClient()
         self.apps_api = client.AppsV1Api(self.api_client)
@@ -51,8 +43,6 @@ class K8SCrawlJob:
         self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
 
         self.templates = Jinja2Templates(directory="templates")
-
-        self.redis = None
 
         # pylint: disable=line-too-long
         # self.redis_url = f"redis://{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
@@ -66,17 +56,15 @@ class K8SCrawlJob:
     async def async_init(self):
         """ async init for k8s job """
         statefulset = await self._get_crawl_stateful()
+        scale = None
 
         # if doesn't exist, create
         if not statefulset:
             await self.init_crawl_state()
-
         else:
-            self.scale = statefulset.spec.replicas
+            scale = statefulset.spec.replicas
 
-            await self.init_redis()
-
-        await self.run_redis_loop()
+        await self.crawl_updater.init_crawl_updater(self.redis_url, scale)
 
     async def init_crawl_state(self):
         """ init crawl state objects from crawler.yaml """
@@ -86,8 +74,6 @@ class K8SCrawlJob:
         if statefulset:
             return
 
-        start_time = await self.crawl_updater.init_crawl(self.initial_scale)
-
         with open("/config/config.yaml") as fh_config:
             params = yaml.safe_load(fh_config)
 
@@ -95,77 +81,11 @@ class K8SCrawlJob:
         params["cid"] = self.crawl_updater.cid
         params["storage_name"] = self.crawl_updater.storage_name or "default"
         params["storage_path"] = self.crawl_updater.storage_path or ""
-        params["scale"] = self.initial_scale
+        params["scale"] = str(self.crawl_updater.scale)
         params["redis_url"] = self.redis_url
         data = self.templates.env.get_template("crawler.yaml").render(params)
 
         await create_from_yaml(self.api_client, data, namespace=self.namespace)
-
-        await self.init_redis()
-
-        await self.redis.set("start_time", start_time)
-
-    async def init_redis(self):
-        """ init redis, wait for valid connection """
-        retry = 3
-        start_time = None
-
-        while True:
-            try:
-                self.redis = await aioredis.from_url(
-                    self.redis_url, encoding="utf-8", decode_responses=True
-                )
-                start_time = await self.redis.get("start_time")
-                print("Redis Connected!", flush=True)
-                break
-            except:
-                print(f"Retrying redis connection in {retry}", flush=True)
-                await asyncio.sleep(retry)
-
-        return start_time
-
-    async def run_redis_loop(self):
-        """ list for queued event messages in a loop. handle file add and done events """
-
-        start_time = await self.redis.get("start_time")
-
-        while True:
-            try:
-                result = await self.redis.blpop(self.crawls_done_key, timeout=5)
-                if result:
-                    msg = json.loads(result[1])
-                    # add completed file
-                    if msg.get("filename"):
-                        await self.crawl_updater.add_file_to_crawl(msg, start_time)
-
-                # update stats
-                await self.crawl_updater.update_running_crawl_stats(
-                    self.redis, self.crawl_id
-                )
-
-                # check crawl status
-                await self.check_crawl_status()
-
-            # pylint: disable=broad-except
-            except Exception as exc:
-                print(f"Retrying crawls done loop: {exc}")
-                await asyncio.sleep(10)
-
-    async def check_crawl_status(self):
-        """ check if crawl is done if all crawl workers have set their done state """
-        results = await self.redis.hvals(f"{self.crawl_id}:status")
-
-        # check if done
-        done = 0
-        for result in results:
-            if result == "done":
-                done += 1
-
-        # check if done
-        if done >= self.scale:
-            await self.delete_crawl_objects()
-            print("all done, exiting", flush=True)
-            sys.exit(0)
 
     async def delete_crawl_objects(self):
         """ delete crawl stateful sets, services and pvcs """
@@ -199,31 +119,50 @@ class K8SCrawlJob:
                 **kwargs
             )
         except Exception as exc:
-            print("Delete failed", exc, flush=True)
+            print("PVC Delete failed", exc, flush=True)
 
-    async def scale_to(self, size):
-        """ scale to "size" replicas """
+        print("Crawl objects deleted, crawl job complete, exiting", flush=True)
+        sys.exit(0)
+
+    async def scale_to(self, scale):
+        """ scale to 'scale' replicas """
         statefulset = await self._get_crawl_stateful()
 
         if not statefulset:
+            print("no stateful")
             return False
 
-        statefulset.spec.replicas = size
-        self.scale = size
+        # if making scale smaller, ensure existing crawlers saved their data
+        pods = []
+        for inx in range(scale, statefulset.spec.replicas):
+            pods.append(
+                await self.core_api.read_namespaced_pod(
+                    name=f"crawl-{self.crawl_id}-{inx}",
+                    namespace=self.namespace,
+                )
+            )
+
+        print("pods", len(pods))
+        if pods:
+            await send_signal_to_pods(self.core_api_ws, self.namespace, pods, "SIGUSR1")
+
+        statefulset.spec.replicas = scale
 
         await self.apps_api.patch_namespaced_stateful_set(
-            name=self.crawl_id, namespace=self.namespace, body=statefulset
+            name=statefulset.metadata.name, namespace=self.namespace, body=statefulset
         )
+
+        await self.crawl_updater.update_crawl(scale=scale)
 
         return True
 
     async def _get_crawl_stateful(self):
         try:
             return await self.apps_api.read_namespaced_stateful_set(
-                name=self.crawl_id,
+                name=f"crawl-{self.crawl_id}",
                 namespace=self.namespace,
             )
-        except:
+        except Exception as e:
             return None
 
     async def shutdown(self, graceful=False):
@@ -247,14 +186,10 @@ class K8SCrawlJob:
             "SIGABRT" if not graceful else "SIGINT",
         )
 
+        await self.crawl_updater.stop_crawl(graceful=graceful)
+
         if not graceful:
-            await self.crawl_updater.update_state("canceled", finished=True)
-
             await self.delete_crawl_objects()
-            sys.exit(0)
-
-        else:
-            await self.crawl_updater.update_state("stopping", finished=False)
 
         return True
 
@@ -267,7 +202,7 @@ async def startup():
 
     def sig_handler(sig, *_args):
         if sig == signal.SIGTERM:
-            print("got SIGTERM, shutting down", flush=True)
+            print("got SIGTERM, job not complete, but shutting down", flush=True)
             if not job.shutdown_pending:
                 sys.exit(3)
 
@@ -275,7 +210,7 @@ async def startup():
 
     @app.post("/scale/{size}")
     async def scale(size: int):
-        return {"success": job.scale_to(size)}
+        return {"success": await job.scale_to(size)}
 
     @app.post("/stop")
     async def stop():
