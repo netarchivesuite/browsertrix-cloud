@@ -42,7 +42,6 @@ class K8SManager:
         self.core_api = client.CoreV1Api(self.api_client)
         self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
         self.batch_api = client.BatchV1Api(self.api_client)
-        self.batch_beta_api = client.BatchV1beta1Api(self.api_client)
 
         self.namespace = namespace
         self._default_storages = {}
@@ -78,6 +77,8 @@ class K8SManager:
             self.crawl_node_selector = {}
 
         self.templates = Jinja2Templates(directory="templates")
+
+        self.job_image = os.environ.get("JOB_IMAGE")
 
         self.loop = asyncio.get_running_loop()
         self.loop.create_task(self.run_event_loop())
@@ -210,16 +211,7 @@ class K8SManager:
         ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
         crawl_id = f"manual-{ts_now}-{cid[:12]}"
 
-        params = {
-            "cid": cid,
-            "userid": str(crawlconfig.userid),
-            "aid": str(crawlconfig.aid),
-            "job_image": os.environ.get("JOB_IMAGE"),
-            "job_name": "job-" + crawl_id,
-            "manual": "1",
-        }
-
-        data = self.templates.env.get_template("job.yaml").render(params)
+        data = await self._load_job_template(crawlconfig, "job-" + crawl_id, manual=True)
 
         # create job directly
         await create_from_yaml(self.api_client, data, namespace=self.namespace)
@@ -230,24 +222,27 @@ class K8SManager:
         """ create or remove cron job based on crawlconfig schedule """
         cid = str(crawlconfig.id)
 
-        cron_jobs = await self.batch_beta_api.list_namespaced_cron_job(
-            namespace=self.namespace, label_selector=f"btrix.crawlconfig={cid}"
-        )
-
+        cron_job_name = f"job-sched-{cid[:12]}"
         cron_job = None
-
-        if len(cron_jobs.items) == 1:
-            cron_job = cron_jobs.items[0]
+        try:
+            cron_job = await self.batch_api.read_namespaced_cron_job(
+                name=cron_job_name,
+                namespace=self.namespace,
+            )
+        # pylint: disable=bare-except
+        except:
+            pass
 
         if cron_job:
             if crawlconfig.schedule and crawlconfig.schedule != cron_job.spec.schedule:
                 cron_job.spec.schedule = crawlconfig.schedule
-                await self.batch_beta_api.patch_namespaced_cron_job(
+
+                await self.batch_api.patch_namespaced_cron_job(
                     name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
                 )
 
             if not crawlconfig.schedule:
-                await self.batch_beta_api.delete_namespaced_cron_job(
+                await self.batch_api.delete_namespaced_cron_job(
                     name=cron_job.metadata.name, namespace=self.namespace
                 )
 
@@ -257,22 +252,17 @@ class K8SManager:
             return
 
         # create new cronjob
-        params = {
-            "cid": cid,
-            "userid": str(crawlconfig.userid),
-            "aid": str(crawlconfig.aid),
-            "job_image": os.environ.get("JOB_IMAGE"),
-            "job_name": f"job-scheduled-{cid}",
-            "manual": "0",
-        }
-
-        data = self.templates.env.get_template("job.yaml").render(params)
+        data = await self._load_job_template(crawlconfig, cron_job_name, manual=False)
 
         job_yaml = yaml.safe_load(data)
-        job_template = job_yaml["spec"]
+
+        job_template = self.api_client.deserialize(
+            FakeKubeResponse(job_yaml), "V1JobTemplateSpec"
+        )
+
         metadata = job_yaml["metadata"]
 
-        spec = client.V1beta1CronJobSpec(
+        spec = client.V1CronJobSpec(
             schedule=crawlconfig.schedule,
             suspend=False,
             concurrency_policy="Forbid",
@@ -281,9 +271,9 @@ class K8SManager:
             job_template=job_template,
         )
 
-        cron_job = client.V1beta1CronJob(metadata=metadata, spec=spec)
+        cron_job = client.V1CronJob(metadata=metadata, spec=spec)
 
-        await self.batch_beta_api.create_namespaced_cron_job(
+        await self.batch_api.create_namespaced_cron_job(
             namespace=self.namespace, body=cron_job
         )
 
@@ -457,6 +447,19 @@ class K8SManager:
     # ========================================================================
     # Internal Methods
 
+    async def _load_job_template(self, crawlconfig, name, manual):
+        params = {
+            "cid": str(crawlconfig.id),
+            "userid": str(crawlconfig.userid),
+            "aid": str(crawlconfig.aid),
+            "job_image": self.job_image,
+            "job_name": name,
+            "manual": "1" if manual else "0"
+        }
+
+        return self.templates.env.get_template("job.yaml").render(params)
+
+
     async def _delete_job(self, name):
         await self.batch_api.delete_namespaced_job(
             name=name,
@@ -500,7 +503,7 @@ class K8SManager:
     async def _delete_crawl_configs(self, label):
         """Delete Crawl Cron Job and all dependent resources, including configmap and secrets"""
 
-        await self.batch_beta_api.delete_collection_namespaced_cron_job(
+        await self.batch_api.delete_collection_namespaced_cron_job(
             namespace=self.namespace,
             label_selector=label,
             propagation_policy="Foreground",
@@ -562,3 +565,11 @@ class K8SManager:
                 },
             }
         }
+
+
+# pylint: disable=too-few-public-methods
+class FakeKubeResponse:
+    """ wrap k8s response for decoding """
+
+    def __init__(self, obj):
+        self.data = json.dumps(obj)

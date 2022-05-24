@@ -36,7 +36,8 @@ class CrawlUpdater:
         self.storage_path = os.environ.get("STORE_PATH")
         self.storage_name = os.environ.get("STORE_NAME")
 
-        self.last_stats = None
+        self.last_done = None
+        self.last_found = None
         self.redis = None
         self.job = job
 
@@ -118,9 +119,7 @@ class CrawlUpdater:
 
         self.finished = ts_now()
 
-        completed = (
-            self.last_stats and self.last_stats["done"] == self.last_stats["found"]
-        )
+        completed = self.last_done and self.last_done == self.last_found
 
         state = "complete" if completed else "partial_complete"
         print("marking crawl as: " + state, flush=True)
@@ -158,16 +157,21 @@ class CrawlUpdater:
 
     async def update_running_crawl_stats(self, crawl_id):
         """ update stats for running crawl """
-        stats = await self._get_running_stats(crawl_id)
-        if self.last_stats == stats:
+        done = await self.redis.llen(f"{crawl_id}:d")
+        found = await self.redis.scard(f"{crawl_id}:s")
+
+        if self.last_done == done and self.last_found == found:
             return
 
-        if not self.last_stats:
+        stats = {"found": found, "done": done}
+
+        if not self.last_found and found:
             await self.update_crawl(state="running", stats=stats)
         else:
             await self.update_crawl(stats=stats)
 
-        self.last_stats = stats
+        self.last_found = found
+        self.last_done = done
 
     async def update_crawl(self, **kwargs):
         """ update crawl state, and optionally mark as finished """
@@ -221,10 +225,6 @@ class CrawlUpdater:
 
     async def _get_running_stats(self, crawl_id):
         """ get stats from redis for running or finished crawl """
-        return {
-            "done": await self.redis.llen(f"{crawl_id}:d"),
-            "found": await self.redis.scard(f"{crawl_id}:s"),
-        }
 
     def _make_crawl(self, state, scale):
         """ Create crawl object for partial or fully complete crawl """

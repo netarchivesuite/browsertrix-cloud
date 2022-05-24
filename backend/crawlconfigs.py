@@ -295,7 +295,8 @@ class CrawlConfigOps:
 
         # update in db
         result = await self.crawl_configs.find_one_and_update(
-            {"_id": cid, "inactive": {"$ne": True}}, {"$set": query}
+            {"_id": cid, "inactive": {"$ne": True}}, {"$set": query},
+            return_document=pymongo.ReturnDocument.AFTER
         )
 
         if not result:
@@ -310,7 +311,8 @@ class CrawlConfigOps:
                 await self.crawl_manager.update_crawl_schedule_or_scale(
                     crawlconfig, update.scale, update.schedule
                 )
-            except Exception:
+            except Exception as exc:
+                print(exc, flush=True)
                 # pylint: disable=raise-missing-from
                 raise HTTPException(
                     status_code=404, detail=f"Crawl Config '{cid}' not found"

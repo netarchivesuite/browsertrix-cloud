@@ -18,7 +18,6 @@ from crawl_updater import CrawlUpdater
 from utils import create_from_yaml, send_signal_to_pods
 
 app = FastAPI()
-loop = asyncio.get_running_loop()
 
 
 # =============================================================================
@@ -51,7 +50,7 @@ class K8SCrawlJob:
 
         self.shutdown_pending = False
 
-        loop.create_task(self.async_init())
+        asyncio.create_task(self.async_init())
 
     async def async_init(self):
         """ async init for k8s job """
@@ -121,7 +120,12 @@ class K8SCrawlJob:
         except Exception as exc:
             print("PVC Delete failed", exc, flush=True)
 
+        asyncio.create_task(self.exit_soon(5))
+
+    async def exit_soon(self, timeout):
+        """ exit soon """
         print("Crawl objects deleted, crawl job complete, exiting", flush=True)
+        await asyncio.sleep(timeout)
         sys.exit(0)
 
     async def scale_to(self, scale):
@@ -142,7 +146,6 @@ class K8SCrawlJob:
                 )
             )
 
-        print("pods", len(pods))
         if pods:
             await send_signal_to_pods(self.core_api_ws, self.namespace, pods, "SIGUSR1")
 
@@ -162,7 +165,7 @@ class K8SCrawlJob:
                 name=f"crawl-{self.crawl_id}",
                 namespace=self.namespace,
             )
-        except Exception as e:
+        except:
             return None
 
     async def shutdown(self, graceful=False):
