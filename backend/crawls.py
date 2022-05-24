@@ -5,11 +5,11 @@ import uuid
 import os
 
 from typing import Optional, List, Dict, Union
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, UUID4, conint
-from redis import asyncio as aioredis
+import pymongo
 
 
 from db import BaseMongoModel
@@ -40,6 +40,9 @@ class CrawlFile(BaseModel):
     hash: str
     size: int
     def_storage_name: Optional[str]
+
+    presignedUrl: Optional[str]
+    expireAt: Optional[datetime]
 
 
 # ============================================================================
@@ -100,6 +103,7 @@ class ListCrawlOut(BaseMongoModel):
     userid: UUID4
     userName: Optional[str]
 
+    aid: UUID4
     cid: UUID4
     configName: Optional[str]
 
@@ -145,7 +149,7 @@ class CrawlOps:
     """ Crawl Ops """
 
     # pylint: disable=too-many-arguments, too-many-instance-attributes
-    def __init__(self, mdb, redis_url, users, crawl_manager, crawl_configs, archives):
+    def __init__(self, mdb, users, crawl_manager, crawl_configs, archives):
         self.crawls = mdb["crawls"]
         self.crawl_manager = crawl_manager
         self.crawl_configs = crawl_configs
@@ -157,8 +161,6 @@ class CrawlOps:
 
         self.presign_duration = int(os.environ.get("PRESIGN_DURATION_SECONDS", 3600))
 
-        self.redis = None
-        asyncio.create_task(self.init_redis(redis_url))
         asyncio.create_task(self.init_index())
 
         self.crawl_manager.set_crawl_ops(self)
@@ -166,12 +168,6 @@ class CrawlOps:
     async def init_index(self):
         """ init index for crawls db """
         await self.crawls.create_index("colls")
-
-    async def init_redis(self, redis_url):
-        """ init redis async """
-        self.redis = await aioredis.from_url(
-            redis_url, encoding="utf-8", decode_responses=True
-        )
 
     async def list_crawls(
         self,
@@ -238,7 +234,7 @@ class CrawlOps:
         crawls = [crawl_cls.from_dict(res) for res in results]
         return crawls
 
-    async def get_crawl(self, crawlid: str, archive: Archive):
+    async def get_crawl_raw(self, crawlid: str, archive: Archive):
         """ Get data for single crawl """
 
         query = {"_id": crawlid}
@@ -246,10 +242,16 @@ class CrawlOps:
             query["aid"] = archive.id
 
         res = await self.crawls.find_one(query)
-        crawl = None
 
         if not res:
             raise HTTPException(status_code=404, detail=f"Crawl not found: {crawlid}")
+
+        return res
+
+    async def get_crawl(self, crawlid: str, archive: Archive):
+        """ Get data for single crawl """
+
+        res = await self.get_crawl_raw(crawlid, archive)
 
         if res.get("files"):
             files = [CrawlFile(**data) for data in res["files"]]
@@ -259,6 +261,8 @@ class CrawlOps:
             res["resources"] = await self._resolve_signed_urls(files, archive)
 
         crawl = CrawlOut.from_dict(res)
+        # pylint: disable=invalid-name
+        crawl.watchIPs = [str(i) for i in range(crawl.scale)]
 
         return await self._resolve_crawl_refs(crawl, archive)
 
@@ -283,21 +287,30 @@ class CrawlOps:
         if not files:
             return
 
-        async with self.redis.pipeline(transaction=True) as pipe:
-            for file_ in files:
-                pipe.get(f"f:{file_.filename}")
+        delta = timedelta(seconds=self.presign_duration)
 
-            results = await pipe.execute()
-
+        updates = []
         out_files = []
 
-        for file_, presigned_url in zip(files, results):
-            if not presigned_url:
+        for file_ in files:
+            presigned_url = file_.presignedUrl
+            now = dt_now()
+
+            if not presigned_url or now >= file_.expireAt:
+                exp = now + delta
                 presigned_url = await get_presigned_url(
                     archive, file_, self.crawl_manager, self.presign_duration
                 )
-                await self.redis.setex(
-                    f"f:{file_.filename}", self.presign_duration - 1, presigned_url
+                updates.append(
+                    (
+                        {"files.filename": file_.filename},
+                        {
+                            "$set": {
+                                "files.$.presignedUrl": presigned_url,
+                                "files.$.expireAt": exp,
+                            }
+                        },
+                    )
                 )
 
             out_files.append(
@@ -309,7 +322,14 @@ class CrawlOps:
                 )
             )
 
+        if updates:
+            asyncio.create_task(self._update_presigned(updates))
+
         return out_files
+
+    async def _update_presigned(self, updates):
+        for update in updates:
+            await self.crawls.find_one_and_update(*update)
 
     async def _resolve_filenames(self, crawl: CrawlOut):
         """ Resolve absolute filenames for each file """
@@ -325,41 +345,6 @@ class CrawlOps:
                 )
                 file_.filename = storage_prefix + file_.filename
 
-    # pylint: disable=too-many-arguments
-    async def get_redis_stats(self, crawl_list):
-        """ Add additional live crawl stats from redis """
-        results = None
-
-        def pairwise(iterable):
-            val = iter(iterable)
-            return zip(val, val)
-
-        async with self.redis.pipeline(transaction=True) as pipe:
-            for crawl in crawl_list:
-                key = crawl.id
-                pipe.llen(f"{key}:d")
-                pipe.scard(f"{key}:s")
-
-            results = await pipe.execute()
-
-        for crawl, (done, total) in zip(crawl_list, pairwise(results)):
-            crawl.stats = {"done": done, "found": total}
-            if total == 0 and done == 0 and crawl.state == "running":
-                crawl.state = "starting"
-
-    async def cache_ips(self, crawl: CrawlOut):
-        """ cache ips for ws auth check """
-        if crawl.watchIPs:
-            await self.redis.sadd(f"{crawl.id}:ips", *crawl.watchIPs)
-            await self.redis.expire(f"{crawl.id}:ips", 300)
-
-    async def ip_access_check(self, crawl_id, crawler_ip):
-        """ check if ip has access to this crawl based on redis cached ip """
-        if await self.redis.sismember(f"{crawl_id}:ips", crawler_ip):
-            return {}
-
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
     async def delete_crawls(self, aid: uuid.UUID, delete_list: DeleteCrawlList):
         """ Delete a list of crawls by id for given archive """
         res = await self.crawls.delete_many(
@@ -367,15 +352,35 @@ class CrawlOps:
         )
         return res.deleted_count
 
+    async def add_new_crawl(self, crawl_id: str, crawlconfig):
+        """ initialize new crawl """
+        crawl = Crawl(
+            id=crawl_id,
+            state="starting",
+            userid=crawlconfig.userid,
+            aid=crawlconfig.aid,
+            cid=crawlconfig.id,
+            scale=crawlconfig.scale,
+            manual=True,
+            started=ts_now(),
+        )
+
+        try:
+            await self.crawls.insert_one(crawl.to_dict())
+            return True
+        except pymongo.errors.DuplicateKeyError:
+            # print(f"Crawl Already Added: {crawl.id} - {crawl.state}")
+            return False
+
 
 # ============================================================================
 # pylint: disable=too-many-arguments, too-many-locals
 def init_crawls_api(
-    app, mdb, redis_url, users, crawl_manager, crawl_config_ops, archives, user_dep
+    app, mdb, users, crawl_manager, crawl_config_ops, archives, user_dep
 ):
     """ API for crawl management, including crawl done callback"""
 
-    ops = CrawlOps(mdb, redis_url, users, crawl_manager, crawl_config_ops, archives)
+    ops = CrawlOps(mdb, users, crawl_manager, crawl_config_ops, archives)
 
     archive_crawl_dep = archives.archive_crawl_dep
 
@@ -486,14 +491,21 @@ def init_crawls_api(
         return {"scaled": scale.scale}
 
     @app.get(
-        "/archives/{aid}/crawls/{crawl_id}/ipaccess/{crawler_ip}",
+        "/archives/{aid}/crawls/{crawl_id}/access",
         tags=["crawls"],
     )
-
-    # pylint: disable=unused-argument
-    async def ip_access_check(
-        crawl_id, crawler_ip, archive: Archive = Depends(archive_crawl_dep)
-    ):
-        return await ops.ip_access_check(crawl_id, crawler_ip)
+    async def access_check(crawl_id, archive: Archive = Depends(archive_crawl_dep)):
+        if await ops.get_crawl_raw(crawl_id, archive):
+            return {}
 
     return ops
+
+
+def dt_now():
+    """ get current ts """
+    return datetime.utcnow().replace(microsecond=0, tzinfo=None)
+
+
+def ts_now():
+    """ get current ts """
+    return str(dt_now())

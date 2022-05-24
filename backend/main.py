@@ -93,7 +93,6 @@ def main():
     crawls = init_crawls_api(
         app,
         mdb,
-        redis_url,
         user_manager,
         crawl_manager,
         crawl_config_ops,

@@ -3,7 +3,6 @@
 import os
 import asyncio
 import json
-import datetime
 import sys
 import signal
 
@@ -54,7 +53,6 @@ class K8SCrawlJob:
         self.templates = Jinja2Templates(directory="templates")
 
         self.redis = None
-        self.is_running = False
 
         # pylint: disable=line-too-long
         # self.redis_url = f"redis://{self.crawl_id}-0.{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
@@ -88,8 +86,7 @@ class K8SCrawlJob:
         if statefulset:
             return
 
-        start_time = str(datetime.datetime.utcnow().replace(microsecond=0, tzinfo=None))
-        await self.crawl_updater.add_new_crawl(start_time)
+        start_time = await self.crawl_updater.init_crawl(self.initial_scale)
 
         with open("/config/config.yaml") as fh_config:
             params = yaml.safe_load(fh_config)
@@ -110,7 +107,7 @@ class K8SCrawlJob:
 
     async def init_redis(self):
         """ init redis, wait for valid connection """
-        retry = 10
+        retry = 3
         start_time = None
 
         while True:
@@ -167,15 +164,8 @@ class K8SCrawlJob:
         # check if done
         if done >= self.scale:
             await self.delete_crawl_objects()
-
+            print("all done, exiting", flush=True)
             sys.exit(0)
-
-        # check if running
-        elif not self.is_running:
-            if len(results) > 0:
-                print("set state to running", flush=True)
-                await self.crawl_updater.update_state("running", False)
-                self.is_running = True
 
     async def delete_crawl_objects(self):
         """ delete crawl stateful sets, services and pvcs """
@@ -239,9 +229,11 @@ class K8SCrawlJob:
     async def shutdown(self, graceful=False):
         """ shutdown crawling, either graceful or immediately"""
         if self.shutdown_pending:
-            return
+            return False
 
         self.shutdown_pending = True
+
+        print("Stopping crawl" if graceful else "Canceling crawl", flush=True)
 
         pods = await self.core_api.list_namespaced_pod(
             namespace=self.namespace,
@@ -252,7 +244,7 @@ class K8SCrawlJob:
             self.core_api_ws,
             self.namespace,
             pods.items,
-            graceful,
+            "SIGABRT" if not graceful else "SIGINT",
         )
 
         if not graceful:
@@ -264,6 +256,8 @@ class K8SCrawlJob:
         else:
             await self.crawl_updater.update_state("stopping", finished=False)
 
+        return True
+
 
 # ============================================================================
 @app.on_event("startup")
@@ -272,27 +266,24 @@ async def startup():
     job = K8SCrawlJob()
 
     def sig_handler(sig, *_args):
-        # gradual shutdown
-        if sig == signal.SIGINT:
-            print("got SIGINT, interrupting")
-            loop.create_task(job.shutdown(graceful=False))
-
-        elif sig == signal.SIGABRT:
-            print("got SIGABRT, aborting")
-            loop.create_task(job.shutdown(graceful=False))
-
-        elif sig == signal.SIGTERM:
-            print("got SIGTERM, shutting down")
+        if sig == signal.SIGTERM:
+            print("got SIGTERM, shutting down", flush=True)
             if not job.shutdown_pending:
                 sys.exit(3)
 
-    signal.signal(signal.SIGINT, sig_handler)
-    signal.signal(signal.SIGABRT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
 
     @app.post("/scale/{size}")
     async def scale(size: int):
-        return job.scale_to(size)
+        return {"success": job.scale_to(size)}
+
+    @app.post("/stop")
+    async def stop():
+        return {"success": await job.shutdown(graceful=True)}
+
+    @app.post("/cancel")
+    async def cancel():
+        return {"success": await job.shutdown(graceful=False)}
 
     @app.get("/healthz")
     async def healthz():

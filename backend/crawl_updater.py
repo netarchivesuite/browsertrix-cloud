@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pymongo
 from db import init_db
-from crawls import Crawl, CrawlFile, CrawlCompleteIn
+from crawls import Crawl, CrawlFile, CrawlCompleteIn, ts_now
 
 
 # =============================================================================
@@ -63,6 +63,9 @@ class CrawlUpdater:
         if self.last_stats == stats:
             return
 
+        if not self.last_stats:
+            await self.update_state("running", finished=False)
+
         await self.crawls.find_one_and_update(
             {"_id": crawl_id},
             {
@@ -72,27 +75,31 @@ class CrawlUpdater:
 
         self.last_stats = stats
 
-    async def update_state(self, state, finished=False):
+    async def update_state(self, state, finished=False, start_time=None):
         """ update crawl state, and optionally mark as finished """
         update = {"state": state}
 
         if finished:
-            update["finished"] = datetime.utcnow().replace(microsecond=0, tzinfo=None)
+            update["finished"] = ts_now()
+
+        if start_time:
+            update["started"] = start_time
 
         await self.crawls.find_one_and_update({"_id": self.crawl_id}, {"$set": update})
 
         return update
 
-    async def add_new_crawl(self, start_time):
-        """ add new crawl """
-        crawl = self._make_crawl("starting", start_time)
+    async def init_crawl(self, scale=1):
+        """ create crawl, doesn't exist, mark as starting """
+        start_time = ts_now()
 
         try:
+            crawl = self._make_crawl("starting", start_time, scale)
             await self.crawls.insert_one(crawl.to_dict())
-            return True
         except pymongo.errors.DuplicateKeyError:
-            # print(f"Crawl Already Added: {crawl.id} - {crawl.state}")
-            return False
+            await self.update_state("starting", finished=False, start_time=start_time)
+
+        return start_time
 
     async def add_file_to_crawl(self, cc_data, started):
         """ Handle crawl complete message, add as CrawlFile to db """
@@ -122,7 +129,7 @@ class CrawlUpdater:
         update = {"state": state}
 
         if state == "complete":
-            update["finished"] = datetime.utcnow().replace(microsecond=0, tzinfo=None)
+            update["finished"] = ts_now()
 
         await self.crawls.find_one_and_update(
             {"_id": self.crawl_id},
@@ -144,7 +151,7 @@ class CrawlUpdater:
             "found": await redis.scard(f"{crawl_id}:s"),
         }
 
-    def _make_crawl(self, state, start_time):
+    def _make_crawl(self, state, start_time, scale):
         """ Create crawl object for partial or fully complete crawl """
         return Crawl(
             id=self.crawl_id,
@@ -153,7 +160,7 @@ class CrawlUpdater:
             aid=self.aid,
             cid=self.cid,
             manual=self.is_manual,
+            scale=scale,
             started=start_time,
-            # watchIPs=watch_ips or [],
             # colls=json.loads(job.metadata.annotations.get("btrix.colls", [])),
         )

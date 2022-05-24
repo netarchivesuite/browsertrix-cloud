@@ -30,6 +30,7 @@ services:
 
     environment:
       - BACKEND_HOST=backend
+      - CRAWLER_FQDN=
 
   redis:
     image: redis

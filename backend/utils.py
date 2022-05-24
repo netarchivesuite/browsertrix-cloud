@@ -18,9 +18,9 @@ async def create_from_yaml(k8s_client, doc, namespace):
     return k8s_objects
 
 
-async def send_signal_to_pods(core_api_ws, namespace, pods, graceful=False, func=None):
+async def send_signal_to_pods(core_api_ws, namespace, pods, signame, func=None):
     """ send signal to all pods """
-    command = ["kill", "-s", "SIGABRT" if not graceful else "SIGINT", "1"]
+    command = ["kill", "-s", signame, "1"]
     interrupted = False
 
     try:

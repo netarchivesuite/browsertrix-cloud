@@ -7,6 +7,7 @@ import base64
 import asyncio
 
 import yaml
+import aiohttp
 
 from kubernetes_asyncio import client, config, watch
 from kubernetes_asyncio.stream import WsApiClient
@@ -14,7 +15,7 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi.templating import Jinja2Templates
 
-from utils import create_from_yaml, send_signal_to_pods
+from utils import create_from_yaml
 from archives import S3Storage
 
 
@@ -195,8 +196,12 @@ class K8SManager:
             INITIAL_SCALE=str(crawlconfig.scale),
         )
 
+        crawl_id = None
+
         if run_now:
-            crawlconfig.currCrawlId = await self._create_manual_job(crawlconfig)
+            crawl_id = await self._create_manual_job(crawlconfig)
+
+        return crawl_id
 
     async def _create_manual_job(self, crawlconfig):
         cid = str(crawlconfig.id)
@@ -359,52 +364,14 @@ class K8SManager:
 
         OR, abruptly by first issueing a SIGABRT, followed by SIGTERM, which
         will terminate immediately"""
-
-        job_name = f"job-{crawl_id}"
-
-        job = await self.batch_api.read_namespaced_job(
-            name=job_name, namespace=self.namespace
+        return await self._post_to_job_pods(
+            crawl_id, aid, "/cancel" if not graceful else "/stop", {}
         )
 
-        if not job or job.metadata.labels["btrix.archive"] != aid:
-            return False
-
-        pods = await self.core_api.list_namespaced_pod(
-            namespace=self.namespace,
-            label_selector=f"job-name={job_name},btrix.archive={aid}",
-        )
-
-        await send_signal_to_pods(
-            self.core_api_ws,
-            self.namespace,
-            pods.items,
-            graceful,
-            # lambda meta: meta.labels["btrix.archive"] == aid,
-        )
-
-        return True
-
-    async def scale_crawl(self, job_name, aid, parallelism=1):
+    async def scale_crawl(self, crawl_id, aid, scale=1):
         """ Set the crawl scale (job parallelism) on the specified job """
 
-        try:
-            job = await self.batch_api.read_namespaced_job(
-                name=job_name, namespace=self.namespace
-            )
-        # pylint: disable=broad-except
-        except Exception:
-            return "Crawl not found"
-
-        if not job or job.metadata.labels["btrix.archive"] != aid:
-            return "Invalid Crawled"
-
-        job.spec.parallelism = parallelism
-
-        await self.batch_api.patch_namespaced_job(
-            name=job.metadata.name, namespace=self.namespace, body=job
-        )
-
-        return None
+        return await self._post_to_job_pods(crawl_id, aid, "/scale", {"scale": scale})
 
     async def delete_crawl_configs_for_archive(self, archive):
         """Delete all crawl configs for given archive"""
@@ -417,20 +384,13 @@ class K8SManager:
     async def handle_completed_job(self, job_name):
         """ Handle completed job: delete """
         # until ttl controller is ready
-        await self._delete_job(job_name)
+        if self.no_delete_jobs:
+            return
 
-        # try:
-        #    job = await self.batch_api.read_namespaced_job(
-        #        name=job_name, namespace=self.namespace
-        #    )
-        # pylint: disable=bare-except
-        # except:
-        #    return False
-
-        # delete job if profile browser job
-        # if job.metadata.labels.get("btrix.profile"):
-        #   await self._delete_job(job_name)
-        #    return True
+        try:
+            await self._delete_job(job_name)
+        except:
+            pass
 
     async def run_profile_browser(
         self, userid, aid, command, storage=None, storage_name=None, baseprofile=None
@@ -548,20 +508,6 @@ class K8SManager:
 
         return None
 
-    # pylint: disable=no-self-use
-    def _get_schedule_suspend_run_now(self, crawlconfig):
-        """ get schedule/suspend/run_now data based on crawlconfig """
-
-        # Create Cron Job
-        suspend = False
-        schedule = crawlconfig.schedule
-
-        if not schedule:
-            schedule = DEFAULT_NO_SCHEDULE
-            suspend = True
-
-        return suspend, schedule
-
     async def _delete_crawl_configs(self, label):
         """Delete Crawl Cron Job and all dependent resources, including configmap and secrets"""
 
@@ -577,167 +523,20 @@ class K8SManager:
             propagation_policy="Foreground",
         )
 
-    async def _create_run_now_job(self, cron_job, userid=None):
-        """Create new job from cron job to run instantly"""
-        annotations = cron_job.spec.job_template.metadata.annotations
-        annotations["btrix.run.manual"] = "1"
-        annotations["btrix.run.schedule"] = ""
+    async def _post_to_job_pods(self, crawl_id, aid, path, data=None):
+        job_name = f"job-{crawl_id}"
 
-        # owner_ref = client.V1OwnerReference(
-        #    kind="CronJob",
-        #    name=cron_job.metadata.name,
-        #    block_owner_deletion=True,
-        #    controller=True,
-        #    userid=cron_job.metadata.userid,
-        #    api_version="batch/v1beta1",
-        # )
-
-        labels = cron_job.metadata.labels
-        if userid:
-            labels["btrix.user"] = userid
-
-        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        name = f"crawl-now-{ts_now}-{cron_job.metadata.labels['btrix.crawlconfig']}"
-
-        object_meta = client.V1ObjectMeta(
-            name=name,
-            annotations=annotations,
-            labels=labels,
-            # owner_references=[owner_ref],
+        pods = await self.core_api.list_namespaced_pod(
+            namespace=self.namespace,
+            label_selector=f"job-name={job_name},btrix.archive={aid}",
         )
 
-        job = client.V1Job(
-            kind="Job",
-            api_version="batch/v1",
-            metadata=object_meta,
-            spec=cron_job.spec.job_template.spec,
-        )
-
-        return await self.batch_api.create_namespaced_job(
-            body=job, namespace=self.namespace
-        )
-
-    def _get_job_template(
-        self,
-        cid,
-        storage_name,
-        storage_path,
-        labels,
-        annotations,
-        out_filename,
-        crawl_timeout,
-        parallel,
-        profile_filename,
-    ):
-        """Return crawl job template for crawl job, including labels, adding optiona crawl params"""
-
-        resources = {
-            "limits": {
-                "cpu": self.limits_cpu,
-                "memory": self.limits_mem,
-            },
-            "requests": {
-                "cpu": self.requests_cpu,
-                "memory": self.requests_mem,
-            },
-        }
-
-        if self.crawler_liveness_port:
-            liveness_probe = {
-                "httpGet": {"path": "/healthz", "port": self.crawler_liveness_port},
-                "initialDelaySeconds": 15,
-                "periodSeconds": 120,
-                "failureThreshold": 3,
-            }
-        else:
-            liveness_probe = None
-
-        command = [
-            "crawl",
-            "--config",
-            "/tmp/crawl-config.json",
-        ]
-
-        if profile_filename:
-            command.append("--profile")
-            command.append(f"@profiles/{profile_filename}")
-
-        job_template = {
-            "metadata": {"annotations": annotations},
-            "spec": {
-                "backoffLimit": self.crawl_retries,
-                "parallelism": parallel,
-                "template": {
-                    "metadata": {"labels": labels},
-                    "spec": {
-                        "nodeSelector": self.crawl_node_selector,
-                        "containers": [
-                            {
-                                "name": "crawler",
-                                "image": self.crawler_image,
-                                "imagePullPolicy": self.crawler_image_pull_policy,
-                                "command": command,
-                                "volumeMounts": [
-                                    {
-                                        "name": "crawl-config",
-                                        "mountPath": "/tmp/crawl-config.json",
-                                        "subPath": "crawl-config.json",
-                                        "readOnly": True,
-                                    },
-                                    {
-                                        "name": "crawl-data",
-                                        "mountPath": "/crawls",
-                                    },
-                                ],
-                                "envFrom": [
-                                    {"configMapRef": {"name": "shared-crawler-config"}},
-                                    {"secretRef": {"name": f"storage-{storage_name}"}},
-                                ],
-                                "env": [
-                                    {
-                                        "name": "CRAWL_ID",
-                                        "valueFrom": {
-                                            "fieldRef": {
-                                                "fieldPath": "metadata.labels['job-name']"
-                                            }
-                                        },
-                                    },
-                                    {"name": "STORE_PATH", "value": storage_path},
-                                    {
-                                        "name": "STORE_FILENAME",
-                                        "value": out_filename,
-                                    },
-                                ],
-                                "resources": resources,
-                                "livenessProbe": liveness_probe,
-                            }
-                        ],
-                        "volumes": [
-                            {
-                                "name": "crawl-config",
-                                "configMap": {
-                                    "name": f"crawl-config-{cid}",
-                                    "items": [
-                                        {
-                                            "key": "crawl-config.json",
-                                            "path": "crawl-config.json",
-                                        }
-                                    ],
-                                },
-                            },
-                            self.crawl_volume,
-                        ],
-                        "restartPolicy": "OnFailure",
-                        "terminationGracePeriodSeconds": self.grace_period,
-                    },
-                },
-            },
-        }
-
-        if crawl_timeout > 0:
-            job_template["spec"]["activeDeadlineSeconds"] = crawl_timeout
-
-        return job_template
+        for pod in pods.items:
+            async with aiohttp.ClientSession() as session:
+                async with session.request(
+                    "POST", f"http://{pod.status.pod_ip}:8000{path}", json=data
+                ) as resp:
+                    await resp.json()
 
     def _get_profile_browser_template(
         self, command, labels, storage_name, storage_path

@@ -89,7 +89,7 @@ class CrawlConfigIn(BaseModel):
     colls: Optional[List[str]] = []
 
     crawlTimeout: Optional[int] = 0
-    scale: Optional[conint(ge=1, le=MAX_CRAWL_SCALE)] = 1
+    cale: Optional[conint(ge=1, le=MAX_CRAWL_SCALE)] = 1
 
     oldId: Optional[UUID4]
 
@@ -260,7 +260,7 @@ class CrawlConfigOps:
             f"data/{self.sanitize(crawlconfig.name)}-@id/{suffix}-@ts-@hostsuffix.wacz"
         )
 
-        new_name = await self.crawl_manager.add_crawl_config(
+        crawl_id = await self.crawl_manager.add_crawl_config(
             crawlconfig=crawlconfig,
             storage=archive.storage,
             run_now=config.runNow,
@@ -268,7 +268,10 @@ class CrawlConfigOps:
             profile_filename=profile_filename,
         )
 
-        return result, new_name
+        if crawl_id and config.runNow:
+            await self.crawl_ops.add_new_crawl(crawl_id, crawlconfig)
+
+        return result, crawl_id
 
     async def update_crawl_config(self, cid: uuid.UUID, update: UpdateCrawlConfig):
         """ Update name, scale and/or schedule for an existing crawl config """
@@ -352,7 +355,8 @@ class CrawlConfigOps:
 
         running = {}
         for crawl in crawls:
-            running[crawl.cid] = crawl.id
+            if crawl.cid in running and crawl.id != "stopping":
+                running[crawl.cid] = crawl.id
 
         configs = []
         for res in results:
@@ -381,7 +385,6 @@ class CrawlConfigOps:
         """ Return the id of currently running crawl for this config, if any """
         # crawls = await self.crawl_manager.list_running_crawls(cid=crawlconfig.id)
         crawls = await self.crawl_ops.list_crawls(cid=crawlconfig.id, running_only=True)
-        print("crawls", crawls)
 
         if len(crawls) == 1:
             return crawls[0].id
@@ -545,6 +548,8 @@ def init_crawl_config_api(
             crawl_id = await crawl_manager.run_crawl_config(
                 crawlconfig, userid=str(user.id)
             )
+            await ops.crawl_ops.add_new_crawl(crawl_id, crawlconfig)
+
         except Exception as e:
             # pylint: disable=raise-missing-from
             raise HTTPException(status_code=500, detail=f"Error starting crawl: {e}")
