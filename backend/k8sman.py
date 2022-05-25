@@ -22,9 +22,6 @@ from archives import S3Storage
 # ============================================================================
 CRAWLER_NAMESPACE = os.environ.get("CRAWLER_NAMESPACE") or "crawlers"
 
-# an 2/31 schedule that will never run as empty is not allowed
-DEFAULT_NO_SCHEDULE = "* * 31 2 *"
-
 
 # pylint: disable=too-many-public-methods
 # ============================================================================
@@ -35,8 +32,6 @@ class K8SManager:
     def __init__(self, namespace=CRAWLER_NAMESPACE):
         config.load_incluster_config()
 
-        self.crawl_ops = None
-
         self.api_client = ApiClient()
 
         self.core_api = client.CoreV1Api(self.api_client)
@@ -46,46 +41,13 @@ class K8SManager:
         self.namespace = namespace
         self._default_storages = {}
 
-        self.crawler_image = os.environ["CRAWLER_IMAGE"]
-        self.crawler_image_pull_policy = os.environ["CRAWLER_PULL_POLICY"]
-
-        self.crawl_retries = int(os.environ.get("CRAWLER_RETRIES", "3"))
-
-        self.crawler_liveness_port = int(os.environ.get("CRAWLER_LIVENESS_PORT", 0))
-
         self.no_delete_jobs = os.environ.get("NO_DELETE_JOBS", "0") != "0"
-
-        self.grace_period = int(os.environ.get("GRACE_PERIOD_SECS", "600"))
-
-        self.requests_cpu = os.environ["CRAWLER_REQUESTS_CPU"]
-        self.limits_cpu = os.environ["CRAWLER_LIMITS_CPU"]
-        self.requests_mem = os.environ["CRAWLER_REQUESTS_MEM"]
-        self.limits_mem = os.environ["CRAWLER_LIMITS_MEM"]
-
-        self.crawl_volume = {"name": "crawl-data"}
-        # if set, use persist volume claim for crawls
-        crawl_pv_claim = os.environ.get("CRAWLER_PV_CLAIM")
-        if crawl_pv_claim:
-            self.crawl_volume["persistentVolumeClaim"] = {"claimName": crawl_pv_claim}
-        else:
-            self.crawl_volume["emptyDir"] = {}
-
-        crawl_node_type = os.environ.get("CRAWLER_NODE_TYPE")
-        if crawl_node_type:
-            self.crawl_node_selector = {"nodeType": crawl_node_type}
-        else:
-            self.crawl_node_selector = {}
 
         self.templates = Jinja2Templates(directory="templates")
 
         self.job_image = os.environ.get("JOB_IMAGE")
 
-        self.loop = asyncio.get_running_loop()
-        self.loop.create_task(self.run_event_loop())
-
-    def set_crawl_ops(self, ops):
-        """ Set crawl ops handler """
-        self.crawl_ops = ops
+        asyncio.create_task(self.run_event_loop())
 
     async def run_event_loop(self):
         """ Run the job watch loop, retry in case of failure"""
@@ -108,7 +70,7 @@ class K8SManager:
                 try:
                     obj = event["object"]
                     if obj.reason == "Completed":
-                        self.loop.create_task(
+                        asyncio.create_task(
                             self.handle_completed_job(obj.involved_object.name)
                         )
 
@@ -211,7 +173,9 @@ class K8SManager:
         ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
         crawl_id = f"manual-{ts_now}-{cid[:12]}"
 
-        data = await self._load_job_template(crawlconfig, "job-" + crawl_id, manual=True)
+        data = await self._load_job_template(
+            crawlconfig, "job-" + crawl_id, manual=True
+        )
 
         # create job directly
         await create_from_yaml(self.api_client, data, namespace=self.namespace)
@@ -384,6 +348,18 @@ class K8SManager:
         else:
             storage_path = ""
 
+        await self.check_storage(storage_name)
+
+        params = {
+            "userid": str(userid),
+            "aid": str(aid),
+            "job_image": self.job_image,
+            "storage_name": storage_name,
+            "storage_path": storage_path,
+        }
+
+        data = await self.templates.env.get_template("profile_job.yaml").render(params)
+
         # Configure Annotations + Labels
         labels = {
             "btrix.user": userid,
@@ -394,25 +370,11 @@ class K8SManager:
         if baseprofile:
             labels["btrix.baseprofile"] = str(baseprofile)
 
-        await self.check_storage(storage_name)
-
-        object_meta = client.V1ObjectMeta(
-            generate_name="profile-browser-",
-            labels=labels,
+        created = await create_from_yaml(
+            self.api_client, data, namespace=self.namespace
         )
 
-        spec = self._get_profile_browser_template(
-            command, labels, storage_name, storage_path
-        )
-
-        job = client.V1Job(
-            kind="Job", api_version="batch/v1", metadata=object_meta, spec=spec
-        )
-
-        new_job = await self.batch_api.create_namespaced_job(
-            body=job, namespace=self.namespace
-        )
-        return new_job.metadata.name
+        return created[0].metadata.name
 
     async def get_profile_browser_data(self, name):
         """ return ip and labels for profile browser """
@@ -454,11 +416,10 @@ class K8SManager:
             "aid": str(crawlconfig.aid),
             "job_image": self.job_image,
             "job_name": name,
-            "manual": "1" if manual else "0"
+            "manual": "1" if manual else "0",
         }
 
         return self.templates.env.get_template("job.yaml").render(params)
-
 
     async def _delete_job(self, name):
         await self.batch_api.delete_namespaced_job(
@@ -530,43 +491,8 @@ class K8SManager:
                 ) as resp:
                     await resp.json()
 
-    def _get_profile_browser_template(
-        self, command, labels, storage_name, storage_path
-    ):
-        return {
-            "template": {
-                "metadata": {"labels": labels},
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "crawler",
-                            "image": self.crawler_image,
-                            "imagePullPolicy": self.crawler_image_pull_policy,
-                            "command": command,
-                            "envFrom": [
-                                {"configMapRef": {"name": "shared-crawler-config"}},
-                                {"secretRef": {"name": f"storage-{storage_name}"}},
-                            ],
-                            "env": [
-                                {
-                                    "name": "CRAWL_ID",
-                                    "valueFrom": {
-                                        "fieldRef": {
-                                            "fieldPath": "metadata.labels['job-name']"
-                                        }
-                                    },
-                                },
-                                {"name": "STORE_PATH", "value": storage_path},
-                            ],
-                        }
-                    ],
-                    "restartPolicy": "Never",
-                    "terminationGracePeriodSeconds": self.grace_period,
-                },
-            }
-        }
 
-
+# ============================================================================
 # pylint: disable=too-few-public-methods
 class FakeKubeResponse:
     """ wrap k8s response for decoding """

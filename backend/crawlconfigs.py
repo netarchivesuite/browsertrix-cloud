@@ -295,8 +295,9 @@ class CrawlConfigOps:
 
         # update in db
         result = await self.crawl_configs.find_one_and_update(
-            {"_id": cid, "inactive": {"$ne": True}}, {"$set": query},
-            return_document=pymongo.ReturnDocument.AFTER
+            {"_id": cid, "inactive": {"$ne": True}},
+            {"$set": query},
+            return_document=pymongo.ReturnDocument.AFTER,
         )
 
         if not result:

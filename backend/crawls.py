@@ -331,20 +331,6 @@ class CrawlOps:
         for update in updates:
             await self.crawls.find_one_and_update(*update)
 
-    async def _resolve_filenames(self, crawl: CrawlOut):
-        """ Resolve absolute filenames for each file """
-        if not crawl.files:
-            return
-
-        for file_ in crawl.files:
-            if file_.def_storage_name:
-                storage_prefix = (
-                    await self.crawl_manager.get_default_storage_access_endpoint(
-                        file_.def_storage_name
-                    )
-                )
-                file_.filename = storage_prefix + file_.filename
-
     async def delete_crawls(self, aid: uuid.UUID, delete_list: DeleteCrawlList):
         """ Delete a list of crawls by id for given archive """
         res = await self.crawls.delete_many(
