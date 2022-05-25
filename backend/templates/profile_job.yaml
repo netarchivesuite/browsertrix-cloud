@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: job-profile-
+
+spec:
+  template:
+    metadata:
+      annotations:
+        btrix.profile: 1
+        btrix.archive: {{ aid }}
+        btrix.user: {{ userid }}
+
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: crawl-job
+          image: {{ job_image }}
+          imagePullPolicy: Always
+          command: ["uvicorn", "profile_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
+
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+
+          env:
+            - name: CRAWL_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['job-name']
+
+            - name: STORE_PATH
+              value: {{ storage_path }}
+
+            - name: STORAGE_NAME
+              value: {{ storage_name }}
+              
+            - name: RUN_MANUAL
+              value: "{{ manual }}"
+
+      volumes:
+        - name: config-volume
+          configMap:
+            name: shared-job-config
+            items:
+              - key: config.yaml
