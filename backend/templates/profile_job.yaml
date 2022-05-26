@@ -1,46 +1,65 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  generateName: job-profile-
+  generateName: job-profile-browser-
+
+  labels:
+    btrix.profile: "1"
+    btrix.archive: {{ aid }}
+    btrix.user: {{ userid }}
+    {%- if baseprofile %}
+    btrix.baseprofile: "{{ baseprofile }}"
+    {%- endif %}
 
 spec:
   template:
     metadata:
-      annotations:
-        btrix.profile: 1
+      labels:
+        btrix.profile: "1"
         btrix.archive: {{ aid }}
         btrix.user: {{ userid }}
+        {%- if baseprofile %}
+        btrix.baseprofile: "{{ baseprofile }}"
+        {%- endif %}
 
     spec:
-      restartPolicy: Never
+      restartPolicy: OnFailure
       containers:
         - name: crawl-job
           image: {{ job_image }}
           imagePullPolicy: Always
-          command: ["uvicorn", "profile_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
+          command: ["python", "profile_job.py"]
 
           volumeMounts:
             - name: config-volume
               mountPath: /config
 
           env:
-            - name: CRAWL_ID
+            - name: JOB_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['job-name']
 
-            - name: STORE_PATH
+            - name: STORAGE_PATH
               value: {{ storage_path }}
 
             - name: STORAGE_NAME
               value: {{ storage_name }}
-              
-            - name: RUN_MANUAL
-              value: "{{ manual }}"
 
+            - name: IDLE_TIMEOUT
+              value: "60"
+
+            - name: START_URL
+              value: {{ url }}
+
+            - name: PROFILE_PATH
+              value: {{ profile_path }}
+              
       volumes:
         - name: config-volume
           configMap:
             name: shared-job-config
             items:
               - key: config.yaml
+                path: config.yaml
+ 

@@ -15,7 +15,7 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi.templating import Jinja2Templates
 
-from utils import create_from_yaml
+from utils import create_from_yaml, send_signal_to_pods
 from archives import S3Storage
 
 
@@ -157,6 +157,7 @@ class K8SManager:
             ARCHIVE_ID=str(crawlconfig.aid),
             CRAWL_CONFIG_ID=str(crawlconfig.id),
             INITIAL_SCALE=str(crawlconfig.scale),
+            PROFILE_FILENAME=profile_filename
         )
 
         crawl_id = None
@@ -336,7 +337,14 @@ class K8SManager:
             pass
 
     async def run_profile_browser(
-        self, userid, aid, command, storage=None, storage_name=None, baseprofile=None
+        self,
+        userid,
+        aid,
+        url,
+        storage=None,
+        storage_name=None,
+        baseprofile=None,
+        profile_path=None,
     ):
         """run browser for profile creation """
 
@@ -355,56 +363,57 @@ class K8SManager:
             "aid": str(aid),
             "job_image": self.job_image,
             "storage_name": storage_name,
-            "storage_path": storage_path,
+            "storage_path": storage_path or "",
+            "baseprofile": baseprofile or "",
+            "profile_path": profile_path,
+            "url": url,
         }
 
-        data = await self.templates.env.get_template("profile_job.yaml").render(params)
-
-        # Configure Annotations + Labels
-        labels = {
-            "btrix.user": userid,
-            "btrix.archive": aid,
-            "btrix.profile": "1",
-        }
-
-        if baseprofile:
-            labels["btrix.baseprofile"] = str(baseprofile)
+        data = self.templates.env.get_template("profile_job.yaml").render(params)
 
         created = await create_from_yaml(
             self.api_client, data, namespace=self.namespace
         )
 
-        return created[0].metadata.name
+        name = created[0][0].metadata.name
+        # pylint: disable=no-else-return
+        if name.startswith("job-"):
+            return name[4:]
+        else:
+            return name
 
-    async def get_profile_browser_data(self, name):
-        """ return ip and labels for profile browser """
+    async def ping_profile_browser(self, browserid):
+        """ return ping profile browser """
+        pods = await self.core_api.list_namespaced_pod(
+            namespace=self.namespace,
+            label_selector=f"job-name=job-{browserid},btrix.profile=1",
+        )
+        if len(pods.items) == 0:
+            return False
+
+        await send_signal_to_pods(
+            self.core_api_ws, self.namespace, pods.items, "SIGUSR1"
+        )
+        return True
+
+    async def get_profile_browser_metadata(self, browserid):
+        """ get browser profile labels """
         try:
             job = await self.batch_api.read_namespaced_job(
-                name=name, namespace=self.namespace
+                name=f"job-{browserid}", namespace=self.namespace
             )
+            if not job.metadata.labels.get("btrix.profile"):
+                return {}
+
         # pylint: disable=bare-except
         except:
-            # job not found
-            return None
+            return {}
 
-        data = job.metadata.labels
-        if not data.get("btrix.profile"):
-            return None
-
-        pods = await self.core_api.list_namespaced_pod(
-            namespace=self.namespace, label_selector=f"job-name={name}"
-        )
-
-        for pod in pods.items:
-            if pod.status.pod_ip and pod.metadata.labels.get("btrix.profile"):
-                data["browser_ip"] = pod.status.pod_ip
-                break
-
-        return data
+        return job.metadata.labels
 
     async def delete_profile_browser(self, browserid):
         """ delete browser job, if it is a profile browser job """
-        return await self.handle_completed_job(browserid)
+        return await self.handle_completed_job(f"job-{browserid}")
 
     # ========================================================================
     # Internal Methods

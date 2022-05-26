@@ -12,6 +12,8 @@ data:
   CRAWLER_IMAGE: {{ .Values.crawler_image }}
   CRAWLER_PULL_POLICY: {{ .Values.crawler_pull_policy }}
 
+  CRAWLER_FQDN_SUFFIX: ".{{ .Values.crawler_namespace }}.svc.cluster.local"
+
   CRAWLER_TIMEOUT: "{{ .Values.crawl_timeout }}"
   CRAWLER_RETRIES: "{{ .Values.crawl_retries }}"
 

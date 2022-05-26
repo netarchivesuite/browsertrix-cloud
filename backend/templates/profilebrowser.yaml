@@ -24,14 +24,24 @@ spec:
         role: browser
 
     spec:
-      terminationGracePeriod: {{ termination_grace_secs }}
+      #terminationGracePeriod: {{ termination_grace_secs }}
       #nodeSelector: {{ node_selector }}
 
       containers:
         - name: browser
-          image: {{ browser_image }}
-          imagePullPolicy: {{ browser_image_pull_policy }}
-          command: ["create-login-profile", "--interactive", "--filename", "/tmp/profile.tar.gz", "--url", "{{ url }}"]
+          image: {{ crawler_image }}
+          imagePullPolicy: {{ crawler_image_pull_policy }}
+          command:
+            - create-login-profile
+            - --interactive
+            - --filename
+            - /tmp/profile.tar.gz
+            - --url
+            - {{ url }}
+          {%- if profile_filename %}
+            - --profile
+            - "@{{ profile_filename }}"
+          {%- endif %}   
 
           envFrom:
             - secretRef:

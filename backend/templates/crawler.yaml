@@ -199,7 +199,16 @@ spec:
         - name: crawler
           image: {{ crawler_image }}
           imagePullPolicy: {{ crawler_image_pull_policy }}
-          command: ["crawl", "--config", "/tmp/crawl-config.json", "--redisStoreUrl", "{{ redis_url }}"]
+          command:
+            - crawl
+            - --config
+            - /tmp/crawl-config.json
+            - --redisStoreUrl
+            - {{ redis_url }}
+          {%- if profile_filename %}
+            - --profile
+            - "@profiles/{{ profile_filename }}"
+          {%- endif %}
 
           volumeMounts:
             - name: crawl-config

@@ -155,15 +155,12 @@ class CrawlOps:
         self.crawl_configs = crawl_configs
         self.user_manager = users
         self.archives = archives
-        self.crawls_done_key = "crawls-done"
 
         self.crawl_configs.set_crawl_ops(self)
 
         self.presign_duration = int(os.environ.get("PRESIGN_DURATION_SECONDS", 3600))
 
         asyncio.create_task(self.init_index())
-
-        self.crawl_manager.set_crawl_ops(self)
 
     async def init_index(self):
         """ init index for crawls db """

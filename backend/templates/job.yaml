@@ -20,7 +20,7 @@ spec:
         btrix.archive: {{ aid }}
         btrix.crawlconfig: {{ cid }}
     spec:
-      restartPolicy: Never
+      restartPolicy: OnFailure
       containers:
         - name: crawl-job
           image: {{ job_image }}
@@ -39,7 +39,7 @@ spec:
                 name: crawl-config-{{ cid }}
 
           env:
-            - name: CRAWL_ID
+            - name: JOB_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['job-name']

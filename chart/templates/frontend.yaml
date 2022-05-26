@@ -57,7 +57,7 @@ spec:
             - name: BACKEND_HOST
               value: {{ .Values.name }}-backend
 
-            - name: CRAWLER_FDQN
+            - name: CRAWLER_FQDN_SUFFIX
               value: ".{{ .Values.crawler_namespace }}.svc.cluster.local"
 
           resources:
