@@ -76,7 +76,7 @@ data:
  
     volume_storage_class: "{{ .Values.volume_storage_class }}"
 
-    requests_hd: 10Gi
+    requests_hd: "{{ .Values.crawler_requests_storage }}"
 
     # redis
     redis_image: {{ .Values.redis_image }}
