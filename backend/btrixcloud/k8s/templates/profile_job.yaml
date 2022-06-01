@@ -28,7 +28,7 @@ spec:
         - name: crawl-job
           image: {{ job_image }}
           imagePullPolicy: Always
-          command: ["python", "profile_job.py"]
+          command: ["python", "-m", "btrixcloud.k8s.profile_job"]
 
           volumeMounts:
             - name: config-volume

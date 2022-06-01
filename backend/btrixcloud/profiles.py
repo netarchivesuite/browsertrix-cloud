@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel, UUID4, HttpUrl
 import aiohttp
 
-from archives import Archive
-from users import User
+from .archives import Archive
+from .users import User
 
-from db import BaseMongoModel
-from crawlconfigs import CrawlConfigIdNameOut
+from .db import BaseMongoModel
+from .crawlconfigs import CrawlConfigIdNameOut
 
 
 BROWSER_EXPIRE = 300

@@ -8,8 +8,9 @@ import asyncio
 from redis import asyncio as aioredis
 
 import pymongo
-from db import init_db
-from crawls import Crawl, CrawlFile, CrawlCompleteIn, ts_now
+
+from .db import init_db
+from .crawls import Crawl, CrawlFile, CrawlCompleteIn, ts_now
 
 
 # =============================================================================

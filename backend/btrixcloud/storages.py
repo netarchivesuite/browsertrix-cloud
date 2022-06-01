@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, HTTPException
 from aiobotocore.session import get_session
 
-from archives import Archive, DefaultStorage, S3Storage
-from users import User
+from .archives import Archive, DefaultStorage, S3Storage
+from .users import User
 
 
 # ============================================================================

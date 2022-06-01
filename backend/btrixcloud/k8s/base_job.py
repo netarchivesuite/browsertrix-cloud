@@ -12,7 +12,7 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi.templating import Jinja2Templates
 
-from utils import create_from_yaml
+from .utils import create_from_yaml, get_templates_dir
 
 
 # =============================================================================
@@ -35,7 +35,7 @@ class K8SBaseJob:
         self.core_api = client.CoreV1Api(self.api_client)
         self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
 
-        self.templates = Jinja2Templates(directory="templates")
+        self.templates = Jinja2Templates(directory=get_templates_dir())
 
     async def async_init(self, template, params):
         """ async init, overridable by subclass """

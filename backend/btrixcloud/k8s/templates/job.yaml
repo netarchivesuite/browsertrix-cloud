@@ -25,7 +25,7 @@ spec:
         - name: crawl-job
           image: {{ job_image }}
           imagePullPolicy: Always
-          command: ["uvicorn", "crawl_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
+          command: ["uvicorn", "btrixcloud.k8s.crawl_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
 
           volumeMounts:
             - name: config-volume

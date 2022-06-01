@@ -1,8 +1,14 @@
 """ k8s utils """
 
+import os
 import yaml
 
 from kubernetes_asyncio.utils import create_from_dict
+
+
+def get_templates_dir():
+    """ return directory containing templates for loading """
+    return os.path.join(os.path.dirname(__file__), "templates")
 
 
 async def create_from_yaml(k8s_client, doc, namespace):

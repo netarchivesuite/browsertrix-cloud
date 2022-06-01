@@ -7,9 +7,9 @@ import os
 
 from fastapi import FastAPI
 
-from crawl_updater import CrawlUpdater
-from utils import send_signal_to_pods
-from base_k8s_job import K8SBaseJob
+from ..crawl_updater import CrawlUpdater
+from .utils import send_signal_to_pods
+from .base_job import K8SBaseJob
 
 app = FastAPI()
 

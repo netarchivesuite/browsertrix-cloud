@@ -13,10 +13,10 @@ import pymongo
 from pydantic import BaseModel, UUID4, conint
 from fastapi import APIRouter, Depends, HTTPException
 
-from users import User
-from archives import Archive, MAX_CRAWL_SCALE
+from .users import User
+from .archives import Archive, MAX_CRAWL_SCALE
 
-from db import BaseMongoModel
+from .db import BaseMongoModel
 
 
 # ============================================================================

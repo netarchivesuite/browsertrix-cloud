@@ -14,8 +14,8 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from fastapi.templating import Jinja2Templates
 
-from utils import create_from_yaml, send_signal_to_pods
-from archives import S3Storage
+from ..archives import S3Storage
+from .utils import create_from_yaml, send_signal_to_pods, get_templates_dir
 
 
 # ============================================================================
@@ -42,7 +42,7 @@ class K8SManager:
 
         self.no_delete_jobs = os.environ.get("NO_DELETE_JOBS", "0") != "0"
 
-        self.templates = Jinja2Templates(directory="templates")
+        self.templates = Jinja2Templates(directory=get_templates_dir())
 
         self.job_image = os.environ.get("JOB_IMAGE")
 
@@ -136,79 +136,6 @@ class K8SManager:
         await self._update_scheduled_job(crawlconfig)
 
         return crawl_id
-
-    async def _create_manual_job(self, crawlconfig):
-        cid = str(crawlconfig.id)
-        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        crawl_id = f"manual-{ts_now}-{cid[:12]}"
-
-        data = await self._load_job_template(
-            crawlconfig, "job-" + crawl_id, manual=True
-        )
-
-        # create job directly
-        await create_from_yaml(self.api_client, data, namespace=self.namespace)
-
-        return crawl_id
-
-    async def _update_scheduled_job(self, crawlconfig):
-        """ create or remove cron job based on crawlconfig schedule """
-        cid = str(crawlconfig.id)
-
-        cron_job_name = f"job-sched-{cid[:12]}"
-        cron_job = None
-        try:
-            cron_job = await self.batch_api.read_namespaced_cron_job(
-                name=cron_job_name,
-                namespace=self.namespace,
-            )
-        # pylint: disable=bare-except
-        except:
-            pass
-
-        if cron_job:
-            if crawlconfig.schedule and crawlconfig.schedule != cron_job.spec.schedule:
-                cron_job.spec.schedule = crawlconfig.schedule
-
-                await self.batch_api.patch_namespaced_cron_job(
-                    name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
-                )
-
-            if not crawlconfig.schedule:
-                await self.batch_api.delete_namespaced_cron_job(
-                    name=cron_job.metadata.name, namespace=self.namespace
-                )
-
-            return
-
-        if not crawlconfig.schedule:
-            return
-
-        # create new cronjob
-        data = await self._load_job_template(crawlconfig, cron_job_name, manual=False)
-
-        job_yaml = yaml.safe_load(data)
-
-        job_template = self.api_client.deserialize(
-            FakeKubeResponse(job_yaml), "V1JobTemplateSpec"
-        )
-
-        metadata = job_yaml["metadata"]
-
-        spec = client.V1CronJobSpec(
-            schedule=crawlconfig.schedule,
-            suspend=False,
-            concurrency_policy="Forbid",
-            successful_jobs_history_limit=2,
-            failed_jobs_history_limit=3,
-            job_template=job_template,
-        )
-
-        cron_job = client.V1CronJob(metadata=metadata, spec=spec)
-
-        await self.batch_api.create_namespaced_cron_job(
-            namespace=self.namespace, body=cron_job
-        )
 
     async def update_crawl_schedule_or_scale(
         self, crawlconfig, scale=None, schedule=None
@@ -467,6 +394,79 @@ class K8SManager:
                     "POST", f"http://{pod.status.pod_ip}:8000{path}", json=data
                 ) as resp:
                     await resp.json()
+
+    async def _create_manual_job(self, crawlconfig):
+        cid = str(crawlconfig.id)
+        ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        crawl_id = f"manual-{ts_now}-{cid[:12]}"
+
+        data = await self._load_job_template(
+            crawlconfig, "job-" + crawl_id, manual=True
+        )
+
+        # create job directly
+        await create_from_yaml(self.api_client, data, namespace=self.namespace)
+
+        return crawl_id
+
+    async def _update_scheduled_job(self, crawlconfig):
+        """ create or remove cron job based on crawlconfig schedule """
+        cid = str(crawlconfig.id)
+
+        cron_job_name = f"job-sched-{cid[:12]}"
+        cron_job = None
+        try:
+            cron_job = await self.batch_api.read_namespaced_cron_job(
+                name=cron_job_name,
+                namespace=self.namespace,
+            )
+        # pylint: disable=bare-except
+        except:
+            pass
+
+        if cron_job:
+            if crawlconfig.schedule and crawlconfig.schedule != cron_job.spec.schedule:
+                cron_job.spec.schedule = crawlconfig.schedule
+
+                await self.batch_api.patch_namespaced_cron_job(
+                    name=cron_job.metadata.name, namespace=self.namespace, body=cron_job
+                )
+
+            if not crawlconfig.schedule:
+                await self.batch_api.delete_namespaced_cron_job(
+                    name=cron_job.metadata.name, namespace=self.namespace
+                )
+
+            return
+
+        if not crawlconfig.schedule:
+            return
+
+        # create new cronjob
+        data = await self._load_job_template(crawlconfig, cron_job_name, manual=False)
+
+        job_yaml = yaml.safe_load(data)
+
+        job_template = self.api_client.deserialize(
+            FakeKubeResponse(job_yaml), "V1JobTemplateSpec"
+        )
+
+        metadata = job_yaml["metadata"]
+
+        spec = client.V1CronJobSpec(
+            schedule=crawlconfig.schedule,
+            suspend=False,
+            concurrency_policy="Forbid",
+            successful_jobs_history_limit=2,
+            failed_jobs_history_limit=3,
+            job_template=job_template,
+        )
+
+        cron_job = client.V1CronJob(metadata=metadata, spec=spec)
+
+        await self.batch_api.create_namespaced_cron_job(
+            namespace=self.namespace, body=cron_job
+        )
 
 
 # ============================================================================

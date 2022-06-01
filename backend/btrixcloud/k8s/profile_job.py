@@ -4,7 +4,7 @@ import asyncio
 import os
 import signal
 
-from base_k8s_job import K8SBaseJob
+from .base_job import K8SBaseJob
 
 
 # =============================================================================

@@ -12,10 +12,10 @@ from pydantic import BaseModel, UUID4, conint
 import pymongo
 
 
-from db import BaseMongoModel
-from users import User
-from archives import Archive, MAX_CRAWL_SCALE
-from storages import get_presigned_url
+from .db import BaseMongoModel
+from .users import User
+from .archives import Archive, MAX_CRAWL_SCALE
+from .storages import get_presigned_url
 
 
 # ============================================================================
