@@ -28,7 +28,6 @@ async def send_signal_to_pods(core_api_ws, namespace, pods, signame, func=None):
             if func and not func(pod.metadata):
                 continue
 
-            print("run", command, pod.metadata.name, flush=True)
             await core_api_ws.connect_get_namespaced_pod_exec(
                 pod.metadata.name,
                 namespace=namespace,

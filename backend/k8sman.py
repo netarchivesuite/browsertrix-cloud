@@ -4,12 +4,11 @@ import os
 import datetime
 import json
 import base64
-import asyncio
 
 import yaml
 import aiohttp
 
-from kubernetes_asyncio import client, config, watch
+from kubernetes_asyncio import client, config
 from kubernetes_asyncio.stream import WsApiClient
 from kubernetes_asyncio.client.api_client import ApiClient
 
@@ -46,37 +45,6 @@ class K8SManager:
         self.templates = Jinja2Templates(directory="templates")
 
         self.job_image = os.environ.get("JOB_IMAGE")
-
-        asyncio.create_task(self.run_event_loop())
-
-    async def run_event_loop(self):
-        """ Run the job watch loop, retry in case of failure"""
-        while True:
-            try:
-                await self.watch_events()
-            # pylint: disable=broad-except
-            except Exception as exc:
-                print(f"Retrying job loop: {exc}")
-                await asyncio.sleep(10)
-
-    async def watch_events(self):
-        """ Get events for completed jobs"""
-        async with watch.Watch().stream(
-            self.core_api.list_namespaced_event,
-            self.namespace,
-            field_selector="involvedObject.kind=Job",
-        ) as stream:
-            async for event in stream:
-                try:
-                    obj = event["object"]
-                    if obj.reason == "Completed":
-                        asyncio.create_task(
-                            self.handle_completed_job(obj.involved_object.name)
-                        )
-
-                # pylint: disable=broad-except
-                except Exception as exc:
-                    print(exc)
 
     # pylint: disable=unused-argument
     async def check_storage(self, storage_name, is_default=False):
@@ -157,7 +125,7 @@ class K8SManager:
             ARCHIVE_ID=str(crawlconfig.aid),
             CRAWL_CONFIG_ID=str(crawlconfig.id),
             INITIAL_SCALE=str(crawlconfig.scale),
-            PROFILE_FILENAME=profile_filename
+            PROFILE_FILENAME=profile_filename,
         )
 
         crawl_id = None
@@ -296,11 +264,6 @@ class K8SManager:
 
         return self._default_storages[name]
 
-    # pylint: disable=no-self-use
-    def _secret_data(self, secret, name):
-        """ decode secret data """
-        return base64.standard_b64decode(secret.data[name]).decode()
-
     async def stop_crawl(self, crawl_id, aid, graceful=True):
         """Attempt to stop crawl, either gracefully by issuing a SIGTERM which
         will attempt to finish current pages
@@ -323,18 +286,6 @@ class K8SManager:
     async def delete_crawl_config_by_id(self, cid):
         """Delete all crawl configs by id"""
         return await self._delete_crawl_configs(f"btrix.crawlconfig={cid}")
-
-    async def handle_completed_job(self, job_name):
-        """ Handle completed job: delete """
-        # until ttl controller is ready
-        if self.no_delete_jobs:
-            return
-
-        try:
-            await self._delete_job(job_name)
-        # pylint: disable=bare-except
-        except:
-            pass
 
     async def run_profile_browser(
         self,
@@ -413,10 +364,15 @@ class K8SManager:
 
     async def delete_profile_browser(self, browserid):
         """ delete browser job, if it is a profile browser job """
-        return await self.handle_completed_job(f"job-{browserid}")
+        return await self._handle_completed_job(f"job-{browserid}")
 
     # ========================================================================
     # Internal Methods
+
+    # pylint: disable=no-self-use
+    def _secret_data(self, secret, name):
+        """ decode secret data """
+        return base64.standard_b64decode(secret.data[name]).decode()
 
     async def _load_job_template(self, crawlconfig, name, manual):
         params = {
@@ -429,6 +385,18 @@ class K8SManager:
         }
 
         return self.templates.env.get_template("job.yaml").render(params)
+
+    async def _handle_completed_job(self, job_name):
+        """ Handle completed job: delete """
+        # until ttl controller is ready
+        if self.no_delete_jobs:
+            return
+
+        try:
+            await self._delete_job(job_name)
+        # pylint: disable=bare-except
+        except:
+            pass
 
     async def _delete_job(self, name):
         await self.batch_api.delete_namespaced_job(

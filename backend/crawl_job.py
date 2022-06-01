@@ -35,7 +35,7 @@ class K8SCrawlJob(K8SBaseJob):
             "storage_path": self.crawl_updater.storage_path or "",
             "scale": self.crawl_updater.scale,
             "redis_url": self.redis_url,
-            "profile_filename": os.environ.get("PROFILE_FILENAME")
+            "profile_filename": os.environ.get("PROFILE_FILENAME"),
         }
 
         self.shutdown_pending = False
