@@ -1,0 +1,41 @@
+version: '3.9'
+
+services:
+  browser:
+    image: {{ crawler_image }}
+    command:
+      - create-login-profile
+      - --interactive
+      - --filename
+      - /tmp/profile.tar.gz
+      - --url
+      - "{{ url }}"
+
+    hostname: "browser-{{ id }}-0.browser-{{ id }}"
+    networks:
+      - btrix
+
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      labels:
+        browser: {{ id }}
+        role: browser
+
+      resources:
+        limits:
+          cpus: "{{ crawler_limits_cpu }}"
+          memory: "{{ crawler_limits_memory }}"
+        reservations:
+          cpus: "{{ crawler_requests_cpu }}"
+          memory: "{{ crawler_requests_memory }}"
+
+    environment:
+      - STORE_PATH={{ storage_path }}
+
+
+networks:
+  btrix:
+    external: 
+      name: btrix-cloud-net
+

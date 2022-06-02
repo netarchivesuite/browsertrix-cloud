@@ -1,11 +1,14 @@
-version: '3.5'
+version: '3.8'
 
 services:
   backend:
     build: ./backend
-    image: webrecorder/browsertrix-backend
+    image: localhost:5000/webrecorder/browsertrix-backend:latest
     volumes:
         - /var/run/docker.sock:/var/run/docker.sock
+
+    configs:
+        - shared_job_config
 
     env_file:
       - ./configs/config.env
@@ -13,7 +16,7 @@ services:
     depends_on:
       - minio
       - mongo
-      - volume_placeholder_image
+      #- volume_placeholder_image
 
 # enable to expose backend api container directly
 #    ports:
@@ -24,7 +27,7 @@ services:
 
   frontend:
     build: ./frontend
-    image: webrecorder/browsertrix-frontend
+    image: localhost:5000/webrecorder/browsertrix-frontend:latest
     ports:
       - 9871:80
 
@@ -63,39 +66,41 @@ services:
     env_file:
       - ./configs/config.env
 
-  init_minio_bucket:
-    image: minio/mc
-    entrypoint: "/bin/sh"
-    command: ['-c', 'mc mb local/test-bucket; mc policy set public local/test-bucket' ]
+  #init_minio_bucket:
+  #  image: minio/mc
+  #  entrypoint: "/bin/sh"
+  #  command: ['-c', 'mc mb local/test-bucket; mc policy set public local/test-bucket' ]
+  #  restart: "no"
 
-    env_file:
-      - ./configs/config.env
+  #  env_file:
+  #    - ./configs/config.env
 
-    depends_on:
-      - minio
+  #  depends_on:
+  #    - minio
 
   # adding here to ensure "tianon/true" is pulled, it's used to create volumes with configs
-  volume_placeholder_image:
-    image: tianon/true
-    container_name: volume_placeholder
+#  volume_placeholder_image:
+#    image: tianon/true
+#    container_name: volume_placeholder
 
 # enable to support signing of wacz files
 # port 80 must be open to automatically generate cert via LetsEncrypt
-  authsign:
-    image: webrecorder/authsign:0.4.0
+#  authsign:
+#    image: webrecorder/authsign:0.4.0
+#    platform: linux/amd64
 
-    volumes:
-      - btrix-sign-data:/data
-      - ./configs/signing.yaml:/app-config/signing.yaml
+#    volumes:
+#      - btrix-sign-data:/data
+#      - ./configs/signing.yaml:/app-config/signing.yaml
 
-    environment:
-      - CONFIG=/app-config/signing.yaml
+#    environment:
+#      - CONFIG=/app-config/signing.yaml
 
-    env_file:
-      - ./configs/config.env
+#    env_file:
+#      - ./configs/config.env
 
-    ports:
-      - 80:80
+#    ports:
+#      - 80:80
 
 volumes:
   btrix-redis-data:
@@ -108,3 +113,6 @@ networks:
   default:
     name: btrix-cloud-net
 
+configs:
+  shared_job_config:
+    file: ./configs/job-config.yaml

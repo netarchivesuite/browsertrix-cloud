@@ -49,7 +49,7 @@ class K8SCrawlJob(K8SBaseJob):
 
         # if doesn't exist, create
         if not statefulset:
-            await self.init_k8s_objects(template, params)
+            await self.init_job_objects(template, params)
         else:
             scale = statefulset.spec.replicas
 
@@ -57,7 +57,7 @@ class K8SCrawlJob(K8SBaseJob):
 
     async def delete_crawl_objects(self):
         """ delete crawl stateful sets, services and pvcs """
-        await self.delete_k8s_objects(f"crawl={self.crawl_id}")
+        await self.delete_job_objects(f"crawl={self.crawl_id}")
 
     async def scale_to(self, scale):
         """ scale to 'scale' replicas """

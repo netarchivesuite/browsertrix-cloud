@@ -69,9 +69,11 @@ def main():
 
         crawl_manager = K8SManager()
     else:
-        from .docker.dockerman import DockerManager
+        # from .docker.dockerman import DockerManager
+        # crawl_manager = DockerManager(archive_ops)
+        from .swarm.swarmmanager import SwarmManager
 
-        crawl_manager = DockerManager(archive_ops)
+        crawl_manager = SwarmManager()
 
     init_storages_api(archive_ops, crawl_manager, current_active_user)
 

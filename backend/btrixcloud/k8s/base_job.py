@@ -21,6 +21,7 @@ class K8SBaseJob:
     """ Crawl Job State """
 
     def __init__(self):
+        super().__init__()
         config.load_incluster_config()
 
         self.namespace = os.environ.get("CRAWL_NAMESPACE") or "crawlers"
@@ -41,9 +42,9 @@ class K8SBaseJob:
 
     async def async_init(self, template, params):
         """ async init, overridable by subclass """
-        await self.init_k8s_objects(template, params)
+        await self.init_job_objects(template, params)
 
-    async def init_k8s_objects(self, template, extra_params=None):
+    async def init_job_objects(self, template, extra_params=None):
         """ init k8s objects from specified template with given extra_params """
         with open(self.config_file) as fh_config:
             params = yaml.safe_load(fh_config)
@@ -57,7 +58,7 @@ class K8SBaseJob:
 
         await create_from_yaml(self.api_client, data, namespace=self.namespace)
 
-    async def delete_k8s_objects(self, selector):
+    async def delete_job_objects(self, selector):
         """ delete crawl stateful sets, services and pvcs """
         kwargs = {
             "namespace": self.namespace,
