@@ -27,6 +27,7 @@ class K8SBaseJob:
         self.config_file = "/config/config.yaml"
 
         self.job_id = os.environ.get("JOB_ID")
+        self.orig_job_id = self.job_id
         if self.job_id.startswith("job-"):
             self.job_id = self.job_id[4:]
 
@@ -34,6 +35,7 @@ class K8SBaseJob:
         self.apps_api = client.AppsV1Api(self.api_client)
         self.core_api = client.CoreV1Api(self.api_client)
         self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
+        self.batch_api = client.BatchV1Api(self.api_client)
 
         self.templates = Jinja2Templates(directory=get_templates_dir())
 
@@ -85,6 +87,14 @@ class K8SBaseJob:
             )
         except Exception as exc:
             print("PVC Delete failed", exc, flush=True)
+
+        # delete our own job!
+        await self.batch_api.delete_namespaced_job(
+            name=self.orig_job_id,
+            namespace=self.namespace,
+            grace_period_seconds=30,
+            propagation_policy="Foreground",
+        )
 
         asyncio.create_task(self.exit_soon(5))
 
