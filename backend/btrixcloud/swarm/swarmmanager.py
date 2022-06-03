@@ -46,9 +46,7 @@ class SwarmManager(BaseCrawlManager):
         return self.storages[name]
 
     async def _create_from_yaml(self, id_, yaml_data):
-        return await self.loop.run_in_executor(
-            None, run_swarm_stack, f"job-{id_}", yaml_data
-        )
+        await self.loop.run_in_executor(None, run_swarm_stack, id_, yaml_data)
 
     async def ping_profile_browser(self, browserid):
         """ return ping profile browser """
@@ -71,3 +69,15 @@ class SwarmManager(BaseCrawlManager):
         return await self.loop.run_in_executor(
             None, delete_swarm_stack, f"job-{browserid}"
         )
+
+    async def _create_config_map(self, crawlconfig, **kwargs):
+        """ create config map for config """
+
+    async def _update_scheduled_job(self, crawlconfig):
+        """ update schedule on crawl job """
+
+    async def _post_to_job(self, crawl_id, aid, path, data=None):
+        """ make a POST request to the container for specified crawl job """
+
+    async def _delete_crawl_configs(self, label):
+        """ delete crawl configs by specified label """

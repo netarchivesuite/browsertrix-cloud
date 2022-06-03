@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from .utils import ping_containers, get_service, scale_service
 
-from .base_job import SwarmBaseJob
+from .base_job import SwarmJobMixin
 from ..crawl_job import CrawlJob
 
 
@@ -14,7 +14,7 @@ app = FastAPI()
 
 
 # =============================================================================
-class SwarmCrawlJob(SwarmBaseJob, CrawlJob):
+class SwarmCrawlJob(SwarmJobMixin, CrawlJob):
     """ Crawl Job """
 
     async def _set_replicas(self, crawl, scale):
@@ -52,4 +52,4 @@ class SwarmCrawlJob(SwarmBaseJob, CrawlJob):
 async def startup():
     """init on startup"""
     job = SwarmCrawlJob()
-    await job.register_handlers(app)
+    job.register_handlers(app)

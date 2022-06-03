@@ -83,7 +83,7 @@ class CrawlJob(ABC):
 
         return True
 
-    async def register_handlers(self, app):
+    def register_handlers(self, app):
         """ register signal and app handlers """
 
         def sig_handler():

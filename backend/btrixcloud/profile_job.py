@@ -33,9 +33,13 @@ class ProfileJob(ABC):
 
         self.loop.create_task(self.async_init("profilebrowser.yaml", params))
 
+    async def async_init(self, template, params):
+        """ async init, overridable by subclass """
+        await self.init_job_objects(template, params)
+
     @abstractmethod
-    async def async_init(self, filename, params):
-        """ base for init """
+    async def init_job_objects(self, filename, params):
+        """ base for creating objects """
 
     @abstractmethod
     async def delete_job_objects(self, job_id):

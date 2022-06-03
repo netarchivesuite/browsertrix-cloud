@@ -355,11 +355,14 @@ class CrawlOps:
             # print(f"Crawl Already Added: {crawl.id} - {crawl.state}")
             return False
 
-    async def cancel_crawl(self, crawl_id: str, fail=False):
-        """ called only when job container has failed to mark crawl as canceled or failed """
-        state = "failed" if fail else "canceled"
+    async def update_crawl(self, crawl_id: str, state: str):
+        """ called only when job container is being stopped/canceled """
         await self.crawls.find_one_and_update(
-            {"_id": crawl_id}, {"$set": {"state": state, "finished": ts_now()}}
+            {
+                "_id": crawl_id,
+                "state": {"$in": ["running", "starting", "canceling", "stopping"]},
+            },
+            {"$set": {"state": state}},
         )
 
 
@@ -398,12 +401,15 @@ def init_crawls_api(
                 crawl_id, archive.id_str, graceful=False
             )
 
+            await ops.update_crawl(crawl_id, "canceling")
+
         except Exception as exc:
             # pylint: disable=raise-missing-from
-            await ops.cancel_crawl(crawl_id, fail=False)
+            await ops.update_crawl(crawl_id, "canceled")
             raise HTTPException(status_code=400, detail=f"Error Canceling Crawl: {exc}")
 
         if not result:
+            await ops.update_crawl(crawl_id, "canceled")
             raise HTTPException(status_code=404, detail=f"Crawl not found: {crawl_id}")
 
         # await ops.store_crawl(crawl)
@@ -423,11 +429,15 @@ def init_crawls_api(
                 crawl_id, archive.id_str, graceful=True
             )
 
+            await ops.update_crawl(crawl_id, "stopping")
+
         except Exception as exc:
             # pylint: disable=raise-missing-from
+            await ops.update_crawl(crawl_id, "failed")
             raise HTTPException(status_code=400, detail=f"Error Stopping Crawl: {exc}")
 
         if not stopping:
+            await ops.update_crawl(crawl_id, "failed")
             raise HTTPException(status_code=404, detail=f"Crawl not found: {crawl_id}")
 
         return {"stopping_gracefully": True}

@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 
 from .utils import send_signal_to_pods
-from .base_job import K8SBaseJob
+from .base_job import K8SJobMixin
 
 from ..crawl_job import CrawlJob
 
@@ -11,7 +11,7 @@ app = FastAPI()
 
 
 # =============================================================================
-class K8SCrawlJob(K8SBaseJob, CrawlJob):
+class K8SCrawlJob(K8SJobMixin, CrawlJob):
     """ Crawl Job State """
 
     async def _set_replicas(self, crawl, scale):
@@ -71,4 +71,4 @@ class K8SCrawlJob(K8SBaseJob, CrawlJob):
 async def startup():
     """init on startup"""
     job = K8SCrawlJob()
-    await job.register_handlers(app)
+    job.register_handlers(app)

@@ -161,11 +161,9 @@ class K8SManager(BaseCrawlManager, K8sAPI):
     # ========================================================================
     # Internal Methods
 
-    async def _create_from_yaml(self, id_, yaml_data):
+    async def _create_from_yaml(self, _, yaml_data):
         """ create from yaml """
         await create_from_yaml(self.api_client, yaml_data, namespace=self.namespace)
-
-        return id_
 
     # pylint: disable=no-self-use
     def _secret_data(self, secret, name):
@@ -258,11 +256,11 @@ class K8SManager(BaseCrawlManager, K8sAPI):
         """ create or remove cron job based on crawlconfig schedule """
         cid = str(crawlconfig.id)
 
-        cron_job_name = f"job-sched-{cid[:12]}"
+        cron_job_id = f"sched-{cid[:12]}"
         cron_job = None
         try:
             cron_job = await self.batch_api.read_namespaced_cron_job(
-                name=cron_job_name,
+                name=f"job-{cron_job_id}",
                 namespace=self.namespace,
             )
         # pylint: disable=bare-except
@@ -288,7 +286,7 @@ class K8SManager(BaseCrawlManager, K8sAPI):
             return
 
         # create new cronjob
-        data = await self._load_job_template(crawlconfig, cron_job_name, manual=False)
+        data = await self._load_job_template(crawlconfig, cron_job_id, manual=False)
 
         job_yaml = yaml.safe_load(data)
 

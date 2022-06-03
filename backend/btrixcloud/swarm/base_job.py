@@ -13,7 +13,7 @@ from .utils import get_templates_dir, run_swarm_stack, delete_swarm_stack
 
 # =============================================================================
 # pylint: disable=too-many-instance-attributes,bare-except,broad-except
-class SwarmBaseJob:
+class SwarmJobMixin:
     """ Crawl Job State """
 
     def __init__(self):
@@ -27,10 +27,6 @@ class SwarmBaseJob:
         self.templates = Jinja2Templates(directory=get_templates_dir())
 
         super().__init__()
-
-    async def async_init(self, template, params):
-        """ async init, overridable by subclass """
-        await self.init_job_objects(template, params)
 
     async def init_job_objects(self, template, extra_params=None):
         """ init swarm objects from specified template with given extra_params """

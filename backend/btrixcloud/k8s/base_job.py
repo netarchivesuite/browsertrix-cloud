@@ -14,7 +14,7 @@ from .k8sapi import K8sAPI
 
 # =============================================================================
 # pylint: disable=too-many-instance-attributes,bare-except,broad-except
-class K8SBaseJob(K8sAPI):
+class K8SJobMixin(K8sAPI):
     """ Crawl Job State """
 
     def __init__(self):
@@ -27,12 +27,7 @@ class K8SBaseJob(K8sAPI):
             self.job_id = self.job_id[4:]
 
         self.templates = Jinja2Templates(directory=get_templates_dir())
-
         super().__init__()
-
-    async def async_init(self, template, params):
-        """ async init, overridable by subclass """
-        await self.init_job_objects(template, params)
 
     async def init_job_objects(self, template, extra_params=None):
         """ init k8s objects from specified template with given extra_params """

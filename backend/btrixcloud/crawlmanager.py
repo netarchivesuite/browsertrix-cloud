@@ -50,12 +50,10 @@ class BaseCrawlManager(ABC):
 
         await self.check_storage(storage_name)
 
-        browserid = f"pro-{random_suffix()}"
-
-        job_id = f"job-{browserid}"
+        browserid = f"prf-{random_suffix()}"
 
         params = {
-            "id": job_id,
+            "id": browserid,
             "userid": str(userid),
             "aid": str(aid),
             "job_image": self.job_image,
@@ -68,7 +66,7 @@ class BaseCrawlManager(ABC):
 
         data = self.templates.env.get_template("profile_job.yaml").render(params)
 
-        await self._create_from_yaml(job_id, data)
+        await self._create_from_yaml(f"job-{browserid}", data)
 
         return browserid
 
@@ -147,22 +145,20 @@ class BaseCrawlManager(ABC):
         ts_now = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
         crawl_id = f"manual-{ts_now}-{cid[:12]}"
 
-        job_id = f"job-{crawl_id}"
-
-        data = await self._load_job_template(crawlconfig, job_id, manual=True)
+        data = await self._load_job_template(crawlconfig, crawl_id, manual=True)
 
         # create job directly
-        await self._create_from_yaml(job_id, data)
+        await self._create_from_yaml(f"job-{crawl_id}", data)
 
         return crawl_id
 
-    async def _load_job_template(self, crawlconfig, name, manual):
+    async def _load_job_template(self, crawlconfig, job_id, manual):
         params = {
+            "id": job_id,
             "cid": str(crawlconfig.id),
             "userid": str(crawlconfig.userid),
             "aid": str(crawlconfig.aid),
             "job_image": self.job_image,
-            "job_name": name,
             "manual": "1" if manual else "0",
         }
 

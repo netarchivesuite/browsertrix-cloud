@@ -1,11 +1,11 @@
 """ entry point for K8S browser job (eg. for profile creation) """
 
-from .base_job import K8SBaseJob
+from .base_job import K8SJobMixin
 from ..profile_job import ProfileJob
 
 
 # =============================================================================
-class K8SProfileJob(K8SBaseJob, ProfileJob):
+class K8SProfileJob(K8SJobMixin, ProfileJob):
     """ Browser run job """
 
 
