@@ -10,6 +10,9 @@ services:
     configs:
         - shared_job_config
 
+    secrets:
+        - storages
+
     env_file:
       - ./configs/config.env
 
@@ -115,4 +118,11 @@ networks:
 
 configs:
   shared_job_config:
-    file: ./configs/job-config.yaml
+    file: ./configs/config.yaml
+
+secrets:
+  storages:
+    file: ./configs/storages.yaml
+
+
+

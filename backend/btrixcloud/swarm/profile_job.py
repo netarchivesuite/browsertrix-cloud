@@ -6,7 +6,7 @@ from ..profile_job import BrowserJob
 
 # =============================================================================
 class SwarmBrowserJob(SwarmBaseJob, BrowserJob):
-#class SwarmBrowserJob(BrowserJob, SwarmBaseJob):
+    # class SwarmBrowserJob(BrowserJob, SwarmBaseJob):
     """ Browser run job """
 
 

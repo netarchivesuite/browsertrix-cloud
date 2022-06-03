@@ -7,6 +7,9 @@ services:
     configs:
       - btrix_shared_job_config
 
+    secrets:
+      - btrix_storages
+
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -46,3 +49,6 @@ configs:
   btrix_shared_job_config:
     external: true
 
+secrets:
+  btrix_storages:
+    external: true

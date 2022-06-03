@@ -1,0 +1,8 @@
+crawler_image: webrecorder/browsertrix-crawler:latest
+
+crawler_requests_cpu: "0.8"
+crawler_limits_cpu: "1.0"
+
+crawler_requests_memory: "800M"
+crawler_limits_memory: "1G"
+

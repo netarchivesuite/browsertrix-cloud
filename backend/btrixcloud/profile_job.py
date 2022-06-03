@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 # =============================================================================
 class BrowserJob(ABC):
     """ Browser run job """
+
     job_id = None
 
     def __init__(self):
@@ -27,7 +28,7 @@ class BrowserJob(ABC):
         self.idle_timeout = int(os.environ["IDLE_TIMEOUT"])
 
         self.loop.add_signal_handler(signal.SIGUSR1, self.ping_handler)
-        self.loop.add_signal_handler(signal.SIGALRM, self.exit_handler)
+        self.loop.add_signal_handler(signal.SIGALRM, self.timeout_handler)
         self.loop.add_signal_handler(signal.SIGTERM, self.exit_handler)
 
         self.loop.create_task(self.async_init("profilebrowser.yaml", params))
@@ -46,12 +47,15 @@ class BrowserJob(ABC):
 
         signal.setitimer(signal.ITIMER_REAL, self.idle_timeout, 0)
 
-    def exit_handler(self, sig, *_args):
-        """ handle SIGTERM or SIGALRM on time expiry """
+    def timeout_handler(self):
+        """ handle SIGTERM  """
+        print("sigterm: shutting down browser...", flush=True)
+        self._do_exit()
 
-        if sig == signal.SIGALRM:
-            print("sigalrm: timer expired ending idle browser...", flush=True)
-        else:
-            print("sigterm: shutting down browser...", flush=True)
+    def exit_handler(self):
+        """ handle SIGALRM """
+        print("sigalrm: timer expired ending idle browser...", flush=True)
+        self._do_exit()
 
+    def _do_exit(self):
         self.loop.create_task(self.delete_job_objects(f"browser={self.job_id}"))

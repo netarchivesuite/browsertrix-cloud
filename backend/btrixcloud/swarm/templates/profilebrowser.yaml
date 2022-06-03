@@ -10,6 +10,11 @@ services:
       - /tmp/profile.tar.gz
       - --url
       - "{{ url }}"
+      {%- if profile_filename %}
+      - --profile
+      - "@{{ profile_filename }}"
+      {%- endif %}   
+
 
     hostname: "browser-{{ id }}-0.browser-{{ id }}"
     networks:
@@ -31,9 +36,12 @@ services:
           memory: "{{ crawler_requests_memory }}"
 
     environment:
+      - STORE_ENDPOINT_URL={{ endpoint_url }}
+      - STORE_ACCESS_KEY={{ access_key }}
+      - STORE_SECRET_KEY={{ secret_key }}
       - STORE_PATH={{ storage_path }}
-
-
+ 
+      
 networks:
   btrix:
     external: 

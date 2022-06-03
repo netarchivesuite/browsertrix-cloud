@@ -13,7 +13,7 @@ from .utils import (
     delete_swarm_stack,
     get_service_labels,
     ping_containers,
-    random_suffix
+    random_suffix,
 )
 
 

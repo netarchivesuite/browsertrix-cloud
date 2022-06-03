@@ -20,6 +20,8 @@ class SwarmBaseJob:
         super().__init__()
 
         self.config_file = "/btrix_shared_job_config"
+        self.storages_file = "/var/run/secrets/btrix_storages"
+        self.curr_storage = {}
 
         self.job_id = os.environ.get("JOB_ID")
         self.prefix = os.environ.get("STACK_PREFIX", "stack-")
@@ -40,6 +42,12 @@ class SwarmBaseJob:
         if extra_params:
             params.update(extra_params)
 
+        if os.environ.get("STORAGE_NAME") and not self.curr_storage:
+            self.load_storage(os.environ.get("STORAGE_NAME"))
+
+        if self.curr_storage:
+            params.update(self.curr_storage)
+
         data = self.templates.env.get_template(template).render(params)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -53,3 +61,16 @@ class SwarmBaseJob:
         print("Removed other objects, removing ourselves", flush=True)
         await loop.run_in_executor(None, delete_swarm_stack, f"job-{self.job_id}")
         return True
+
+    def load_storage(self, storage_name):
+        """ load storage credentials for given storage from yaml file """
+        with open(self.storages_file) as fh_config:
+            data = yaml.safe_load(fh_config.read())
+
+        if not data or not data.get("storages"):
+            return
+
+        for storage in data["storages"]:
+            if storage.get("name") == storage_name:
+                self.curr_storage = storage
+                break

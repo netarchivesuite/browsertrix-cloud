@@ -5,6 +5,7 @@ import os
 import base64
 
 from python_on_whales import docker
+from python_on_whales.exceptions import DockerException
 
 
 def get_templates_dir():
@@ -18,36 +19,46 @@ def run_swarm_stack(name, data):
         fh_io.write(data)
         fh_io.flush()
 
-        docker.stack.deploy(name, compose_files=[fh_io.name], orchestrator="swarm")
+        try:
+            docker.stack.deploy(name, compose_files=[fh_io.name], orchestrator="swarm")
+        except DockerException as exc:
+            print(exc, flush=True)
 
     return name
 
 
 def delete_swarm_stack(name):
     """ remove stack """
-    return docker.stack.remove(name)
+    try:
+        docker.stack.remove(name)
+        return True
+    except DockerException as exc:
+        print(exc, flush=True)
+        return False
 
 
-# pylint: disable=broad-except
 def get_service_labels(service_name):
     """ get labels from a swarm service """
     try:
         res = docker.service.inspect(service_name)
         # print("labels", res.spec.labels)
         return res.spec.labels
-    except Exception as exc:
+    except DockerException as exc:
         print(exc, flush=True)
         return {}
 
 
 def ping_containers(name, value, signal_="SIGTERM"):
     """ ping running containers with signal """
-    conts = docker.container.list(all=False, filters={name: value})
-    print(name, value)
-    print(conts)
-    for cont in conts:
-        print("Sending Signal", flush=True)
-        cont.kill(signal_)
+    try:
+        conts = docker.container.list(filters={name: value})
+        for cont in conts:
+            print("Sending Signal: " + signal_, flush=True)
+            cont.kill(signal_)
+        return True
+    except DockerException as exc:
+        print(exc, flush=True)
+        return False
 
 
 def random_suffix():
