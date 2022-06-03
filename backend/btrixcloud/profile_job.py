@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 
 
 # =============================================================================
-class BrowserJob(ABC):
+class ProfileJob(ABC):
     """ Browser run job """
 
     job_id = None
