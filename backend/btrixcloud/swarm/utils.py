@@ -37,15 +37,34 @@ def delete_swarm_stack(name):
         return False
 
 
-def get_service_labels(service_name):
-    """ get labels from a swarm service """
+def get_service(service_name):
+    """ get a swarm service """
     try:
         res = docker.service.inspect(service_name)
-        # print("labels", res.spec.labels)
-        return res.spec.labels
+        return res
     except DockerException as exc:
         print(exc, flush=True)
-        return {}
+        return None
+
+def get_service_labels(service_name):
+    """ get labels from a swarm service """
+    service = get_service(service_name)
+    return service.spec.labels if service else {}
+
+
+def scale_service(service_name, new_scale):
+    """ update scale of service """
+    service = get_service(service_name)
+    if not service:
+        return False
+
+    try:
+        service.scale(new_scale)
+    except DockerException as exc:
+        print(exc, flush=True)
+        return False
+
+    return True
 
 
 def ping_containers(name, value, signal_="SIGTERM"):

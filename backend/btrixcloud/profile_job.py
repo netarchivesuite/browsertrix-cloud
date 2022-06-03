@@ -37,6 +37,7 @@ class BrowserJob(ABC):
     async def async_init(self, filename, params):
         """ base for init """
 
+    @abstractmethod
     async def delete_job_objects(self, job_id):
         """ base for deleting objects """
 
