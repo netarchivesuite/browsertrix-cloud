@@ -2,7 +2,6 @@
 
 import tempfile
 import os
-import base64
 
 from python_on_whales import docker
 from python_on_whales.exceptions import DockerException
@@ -46,6 +45,7 @@ def get_service(service_name):
         print(exc, flush=True)
         return None
 
+
 def get_service_labels(service_name):
     """ get labels from a swarm service """
     service = get_service(service_name)
@@ -78,8 +78,3 @@ def ping_containers(name, value, signal_="SIGTERM"):
     except DockerException as exc:
         print(exc, flush=True)
         return False
-
-
-def random_suffix():
-    """ generate suffix for unique container """
-    return base64.b32encode(os.urandom(5)).lower().decode("utf-8")

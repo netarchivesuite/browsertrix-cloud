@@ -6,24 +6,18 @@ import sys
 
 import yaml
 
-from kubernetes_asyncio import client, config
-from kubernetes_asyncio.stream import WsApiClient
-from kubernetes_asyncio.client.api_client import ApiClient
-
 from fastapi.templating import Jinja2Templates
 
 from .utils import create_from_yaml, get_templates_dir
+from .k8sapi import K8sAPI
 
 
 # =============================================================================
 # pylint: disable=too-many-instance-attributes,bare-except,broad-except
-class K8SBaseJob:
+class K8SBaseJob(K8sAPI):
     """ Crawl Job State """
 
     def __init__(self):
-        super().__init__()
-        config.load_incluster_config()
-
         self.namespace = os.environ.get("CRAWL_NAMESPACE") or "crawlers"
         self.config_file = "/config/config.yaml"
 
@@ -32,13 +26,9 @@ class K8SBaseJob:
         if self.job_id.startswith("job-"):
             self.job_id = self.job_id[4:]
 
-        self.api_client = ApiClient()
-        self.apps_api = client.AppsV1Api(self.api_client)
-        self.core_api = client.CoreV1Api(self.api_client)
-        self.core_api_ws = client.CoreV1Api(api_client=WsApiClient())
-        self.batch_api = client.BatchV1Api(self.api_client)
-
         self.templates = Jinja2Templates(directory=get_templates_dir())
+
+        super().__init__()
 
     async def async_init(self, template, params):
         """ async init, overridable by subclass """

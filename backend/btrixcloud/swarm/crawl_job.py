@@ -41,6 +41,11 @@ class SwarmCrawlJob(SwarmBaseJob, CrawlJob):
             "SIGABRT" if not graceful else "SIGINT",
         )
 
+    # pylint: disable=line-too-long
+    @property
+    def redis_url(self):
+        return f"redis://crawler-{self.job_id}_redis/0"
+
 
 # ============================================================================
 @app.on_event("startup")

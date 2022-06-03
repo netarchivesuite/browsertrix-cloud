@@ -20,13 +20,7 @@ class CrawlJob(ABC):
     def __init__(self):
         super().__init__()
 
-        self.crawl_id = self.job_id
-
-        self.crawl_updater = CrawlUpdater(self.crawl_id, self)
-
-        # pylint: disable=line-too-long
-        # self.redis_url = f"redis://redis-{self.crawl_id}-0.redis-{self.crawl_id}.{self.namespace}.svc.cluster.local/0"
-        self.redis_url = os.environ["REDIS_URL"]
+        self.crawl_updater = CrawlUpdater(self.job_id, self)
 
         params = {
             "cid": self.crawl_updater.cid,
@@ -56,7 +50,7 @@ class CrawlJob(ABC):
 
     async def delete_crawl(self):
         """ delete crawl stateful sets, services and pvcs """
-        await self.delete_job_objects(f"crawl={self.crawl_id}")
+        await self.delete_job_objects(f"crawl={self.job_id}")
 
     async def scale_to(self, scale):
         """ scale to 'scale' replicas """
@@ -139,3 +133,8 @@ class CrawlJob(ABC):
     @abstractmethod
     async def _send_shutdown_signal(self, graceful=True):
         """ shutdown crawl """
+
+    @property
+    @abstractmethod
+    def redis_url(self):
+        """ get redis url """

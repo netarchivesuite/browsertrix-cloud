@@ -17,8 +17,6 @@ class SwarmBaseJob:
     """ Crawl Job State """
 
     def __init__(self):
-        super().__init__()
-
         self.config_file = "/btrix_shared_job_config"
         self.storages_file = "/var/run/secrets/btrix_storages"
         self.curr_storage = {}
@@ -27,6 +25,8 @@ class SwarmBaseJob:
         self.prefix = os.environ.get("STACK_PREFIX", "stack-")
 
         self.templates = Jinja2Templates(directory=get_templates_dir())
+
+        super().__init__()
 
     async def async_init(self, template, params):
         """ async init, overridable by subclass """
