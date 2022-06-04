@@ -19,7 +19,6 @@ services:
     depends_on:
       - minio
       - mongo
-      #- volume_placeholder_image
 
 # enable to expose backend api container directly
 #    ports:
@@ -41,6 +40,7 @@ services:
 
     depends_on:
       - backend
+      - minio
 
     environment:
       - BACKEND_HOST=backend
@@ -71,10 +71,11 @@ services:
 
   minio:
     image: minio/minio
-    command: ["server", "/data", "--console-address", ":9001"]
-    ports:
-      - 9000:9000
-      - 9001:9001
+    #command: ["server", "/data", "--console-address", ":9001"]
+
+    entrypoint: "/bin/sh"
+    # auto-create bucket via existing dir (only for single-node mode)
+    command: ["-c", "mkdir -p /data/$$MINIO_BUCKET; /usr/bin/docker-entrypoint.sh server /data --console-address :9001"]
 
     volumes:
       - btrix-minio-data:/data
@@ -82,32 +83,12 @@ services:
     env_file:
       - ./configs/config.env
 
-  init_minio_bucket:
-    image: minio/mc
-    entrypoint: "/bin/sh"
-    command:
-      - -c
-      - mc mb local/test-bucket
-      #- mc policy set public local/test-bucket
-
-    restart: "no"
-    deploy:
-      restart_policy:
-        condition: none
-
-    env_file:
-      - ./configs/config.env
-
-    depends_on:
-      - minio
-
-  # adding here to ensure "tianon/true" is pulled, it's used to create volumes with configs
-  volume_placeholder_image:
-    image: tianon/true
-    restart: "no"
-    deploy:
-      restart_policy:
-        condition: none
+# enable below to access minio console directly
+#    ports:
+#      - 9001:9001
+#
+#    environment:
+#      - MINIO_SERVER_URL=http://127.0.0.1:9000
 
 
 # enable to support signing of wacz files
