@@ -1,5 +1,9 @@
 """ Swarn Runner """
 import os
+import json
+import socket
+
+import aiohttp
 
 from ..archives import S3Storage
 
@@ -9,6 +13,8 @@ from .utils import (
     delete_swarm_stack,
     get_service_labels,
     ping_containers,
+    create_config,
+    delete_configs,
 )
 
 from ..crawlmanager import BaseCrawlManager
@@ -53,7 +59,6 @@ class SwarmManager(BaseCrawlManager):
         return await self.loop.run_in_executor(
             None,
             ping_containers,
-            "name",
             f"job-{browserid}_browser",
             "SIGUSR1",
         )
@@ -70,14 +75,55 @@ class SwarmManager(BaseCrawlManager):
             None, delete_swarm_stack, f"job-{browserid}"
         )
 
+    def set_watch_ips(self, crawl):
+        """ fill IPs for crawl """
+        service_name = f"crawl-{crawl.id}_crawler"
+
+        try:
+            result = socket.gethostbyname_ex(service_name)
+            crawl.watchIPs = result[2]
+        # pylint: disable=bare-except
+        except:
+            pass
+
+        print("ips", crawl.watchIPs, flush=True)
+
+    def _add_extra_crawl_job_params(self, params):
+        """ add extra crawl job params """
+        params["mongo_user"] = os.environ["MONGO_INITDB_ROOT_USERNAME"]
+        params["mongo_pass"] = os.environ["MONGO_INITDB_ROOT_PASSWORD"]
+
     async def _create_config_map(self, crawlconfig, **kwargs):
         """ create config map for config """
+
+        data = json.dumps(crawlconfig.get_raw_config())
+
+        labels = {
+            "btrix.crawlconfig": str(crawlconfig.id),
+            "btrix.archive": str(crawlconfig.aid),
+        }
+
+        await self.loop.run_in_executor(
+            None, create_config, f"crawl-config-{crawlconfig.id}", data, labels
+        )
+
+        data = json.dumps(kwargs)
+
+        await self.loop.run_in_executor(
+            None, create_config, f"crawl-opts-{crawlconfig.id}", data, labels
+        )
 
     async def _update_scheduled_job(self, crawlconfig):
         """ update schedule on crawl job """
 
     async def _post_to_job(self, crawl_id, aid, path, data=None):
         """ make a POST request to the container for specified crawl job """
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                "POST", f"http://job-{crawl_id}_browser:8000{path}", json=data
+            ) as resp:
+                await resp.json()
 
     async def _delete_crawl_configs(self, label):
         """ delete crawl configs by specified label """
+        await self.loop.run_in_executor(None, delete_configs, label)

@@ -94,11 +94,11 @@ class BaseCrawlManager(ABC):
             crawlconfig,
             STORE_PATH=storage_path,
             STORE_FILENAME=out_filename,
-            STORE_NAME=storage_name,
+            STORAGE_NAME=storage_name,
             USER_ID=str(crawlconfig.userid),
             ARCHIVE_ID=str(crawlconfig.aid),
             CRAWL_CONFIG_ID=str(crawlconfig.id),
-            INITIAL_SCALE=str(crawlconfig.scale),
+            # INITIAL_SCALE=str(crawlconfig.scale),
             PROFILE_FILENAME=profile_filename,
         )
 
@@ -111,11 +111,22 @@ class BaseCrawlManager(ABC):
 
         return crawl_id
 
+    # pylint: disable=unused-argument
     async def run_crawl_config(self, crawlconfig, userid=None):
         """Run crawl job for cron job based on specified crawlconfig
         optionally set different user"""
 
         return await self._create_manual_job(crawlconfig)
+
+    async def update_crawlconfig_schedule_or_scale(
+        self, crawlconfig, scale=None, schedule=None
+    ):
+        """ Update the schedule or scale for existing crawl config """
+
+        if schedule is not None:
+            await self._update_scheduled_job(crawlconfig)
+
+        return True
 
     async def stop_crawl(self, crawl_id, aid, graceful=True):
         """Attempt to stop crawl, either gracefully by issuing a SIGTERM which
@@ -162,7 +173,16 @@ class BaseCrawlManager(ABC):
             "manual": "1" if manual else "0",
         }
 
+        self._add_extra_crawl_job_params(params)
+
         return self.templates.env.get_template("crawl_job.yaml").render(params)
+
+    def _add_extra_crawl_job_params(self, params):
+        """ add extra params for crawl job template, if any """
+
+    @abstractmethod
+    def set_watch_ips(self, crawl):
+        """ fill watch IPs, if watching by accessing IPs directly """
 
     @abstractmethod
     async def check_storage(self, storage_name, is_default=False):

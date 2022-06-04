@@ -17,29 +17,54 @@ class SwarmJobMixin:
     """ Crawl Job State """
 
     def __init__(self):
-        self.config_file = "/btrix_shared_job_config"
-        self.storages_file = "/var/run/secrets/btrix_storages"
+        self.shared_config_file = os.environ.get("SHARED_JOB_CONFIG")
+        self.custom_config_file = os.environ.get("CUSTOM_JOB_CONFIG")
+        self.shared_secrets_file = os.environ.get("STORAGE_SECRETS")
+
         self.curr_storage = {}
 
         self.job_id = os.environ.get("JOB_ID")
         self.prefix = os.environ.get("STACK_PREFIX", "stack-")
 
+        if self.custom_config_file:
+            self._populate_env("/" + self.custom_config_file)
+
         self.templates = Jinja2Templates(directory=get_templates_dir())
 
         super().__init__()
 
+    # pylint: disable=no-self-use
+    def _populate_env(self, filename):
+        with open(filename) as fh_config:
+            params = yaml.safe_load(fh_config)
+
+        for key in params:
+            val = params[key]
+            if isinstance(val, str):
+                os.environ[key] = val
+
     async def init_job_objects(self, template, extra_params=None):
         """ init swarm objects from specified template with given extra_params """
-        with open(self.config_file) as fh_config:
-            params = yaml.safe_load(fh_config)
+        if self.shared_config_file:
+            with open("/" + self.shared_config_file) as fh_config:
+                params = yaml.safe_load(fh_config)
+        else:
+            params = {}
 
         params["id"] = self.job_id
 
         if extra_params:
             params.update(extra_params)
 
-        if os.environ.get("STORAGE_NAME") and not self.curr_storage:
-            self.load_storage(os.environ.get("STORAGE_NAME"))
+        if (
+            os.environ.get("STORAGE_NAME")
+            and self.shared_secrets_file
+            and not self.curr_storage
+        ):
+            self.load_storage(
+                f"/var/run/secrets/{self.shared_secrets_file}",
+                os.environ.get("STORAGE_NAME"),
+            )
 
         if self.curr_storage:
             params.update(self.curr_storage)
@@ -58,9 +83,9 @@ class SwarmJobMixin:
         await loop.run_in_executor(None, delete_swarm_stack, f"job-{self.job_id}")
         return True
 
-    def load_storage(self, storage_name):
+    def load_storage(self, filename, storage_name):
         """ load storage credentials for given storage from yaml file """
-        with open(self.storages_file) as fh_config:
+        with open(filename) as fh_config:
             data = yaml.safe_load(fh_config.read())
 
         if not data or not data.get("storages"):

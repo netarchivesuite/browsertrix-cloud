@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 import os
+import re
 
 from typing import Optional, List, Dict, Union
 from datetime import datetime, timedelta
@@ -258,10 +259,28 @@ class CrawlOps:
             res["resources"] = await self._resolve_signed_urls(files, archive)
 
         crawl = CrawlOut.from_dict(res)
+
+        self.crawl_manager.set_watch_ips(crawl)
+
         # pylint: disable=invalid-name
-        crawl.watchIPs = [str(i) for i in range(crawl.scale)]
+        if not crawl.watchIPs:
+            crawl.watchIPs = [str(i) for i in range(crawl.scale)]
 
         return await self._resolve_crawl_refs(crawl, archive)
+
+    async def has_crawl_ip(self, crawlid: str, archive: Archive, ip_addr: str):
+        """ check if valid crawl, and optionally, if specified IP is part of the crawl watchIPs """
+        res = await self.get_crawl_raw(crawlid, archive)
+
+        # check if this is actually an ip
+        if not re.match(r"[\d]+\.[\d]+\.[\d]+\.[\d]+", ip_addr):
+            return True
+
+        crawl = CrawlOut.from_dict(res)
+
+        self.crawl_manager.set_watch_ips(crawl)
+
+        return ip_addr in crawl.watchIPs
 
     async def _resolve_crawl_refs(
         self, crawl: Union[CrawlOut, ListCrawlOut], archive: Archive
@@ -498,6 +517,18 @@ def init_crawls_api(
     async def access_check(crawl_id, archive: Archive = Depends(archive_crawl_dep)):
         if await ops.get_crawl_raw(crawl_id, archive):
             return {}
+
+    @app.get(
+        "/archives/{aid}/crawls/{crawl_id}/access/{ip_addr}",
+        tags=["crawls"],
+    )
+    async def access_check_ip(
+        crawl_id, ip_addr, archive: Archive = Depends(archive_crawl_dep)
+    ):
+        if await ops.has_crawl_ip(crawl_id, archive, ip_addr):
+            return {}
+
+        raise HTTPException(status_code=400, detail="invalid_ip")
 
     return ops
 

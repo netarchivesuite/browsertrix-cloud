@@ -20,7 +20,7 @@ class ProfileJob(ABC):
 
         params = {
             "storage_name": os.environ.get("STORAGE_NAME"),
-            "storage_path": os.environ.get("STORAGE_PATH") or "",
+            "storage_path": os.environ.get("STORE_PATH") or "",
             "url": os.environ.get("START_URL"),
             "profile_filename": os.environ.get("PROFILE_PATH") or "",
         }

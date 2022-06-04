@@ -3,9 +3,11 @@ version: '3.9'
 services:
   browser:
     image: {{ job_image }}
-    command: ["python", "-m", "btrixcloud.swarm.profile_job"]
+    command: ["uvicorn", "btrixcloud.swarm.crawl_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
+
     configs:
       - shared_job_config.yaml
+      - custom_job_config.yaml
 
     secrets:
       - storages.yaml
@@ -13,45 +15,49 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-    #networks:
-    #  - btrix
+    networks:
+      - btrix
 
     deploy:
-      #endpoint_mode: dnsrr
       labels:
-        btrix.profile: "1"
-        btrix.archive: {{ aid }}
+        btrix.run.manual: "{{ manual }}"
         btrix.user: {{ userid }}
-        {%- if baseprofile %}
-        btrix.baseprofile: "{{ baseprofile }}"
-        {%- endif %}
+        btrix.archive: {{ aid }}
+        btrix.crawlconfig: {{ cid }}
 
       #mode: replicated-job
       replicas: 1
 
     environment:
       SHARED_JOB_CONFIG: shared_job_config.yaml
+      CUSTOM_JOB_CONFIG: custom_job_config.yaml
       STORAGE_SECRETS: storages.yaml
 
       JOB_ID: "{{ id }}"
-      STACK_PREFIX: "browser-"
+      STACK_PREFIX: "crawl-"
       STORE_PATH: "{{ storage_path }}"
       STORAGE_NAME: "{{ storage_name }}"
-      IDLE_TIMEOUT: "60"
-      START_URL: "{{ url }}"
       PROFILE_PATH: "{{ profile_path }}"
+
+      MONGO_HOST: mongo
+      MONGO_INITDB_ROOT_USERNAME: {{ mongo_user }}
+      MONGO_INITDB_ROOT_PASSWORD: {{ mongo_pass }}
+
+      RUN_MANUAL: "{{ manual }}"
  
-
-#networks:
-#  btrix:
-#    external: 
-#      name: btrix-cloud-net
-
+networks:
+  btrix:
+    external: 
+      name: btrix-cloud-net
 
 configs:
   shared_job_config.yaml:
     external: true
     name: btrix_shared_job_config
+
+  custom_job_config.yaml:
+    external: true
+    name: crawl-opts-{{ cid }}
 
 secrets:
   storages.yaml:

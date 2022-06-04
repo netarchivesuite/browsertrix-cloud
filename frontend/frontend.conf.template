@@ -40,11 +40,20 @@ server {
     location ~* /watch/([^/]+)/([^/]+)/([^/]+)/ws {
       set $archive $1;
       set $crawl $2;
-      set $num $3;
+      set $ip_or_index $3;
       set $auth_bearer $arg_auth_bearer;
       auth_request  /access_check;
 
-      proxy_pass http://crawl-$crawl-$num.crawl-$crawl${CRAWLER_FQDN_SUFFIX}:9037/ws;
+      # k8s: index to fixed host browser container
+      if ($ip_or_index ~* ^[\d]+$) {
+        proxy_pass http://crawl-$crawl-$ip_or_index.crawl-$crawl${CRAWLER_FQDN_SUFFIX}:9037/ws;
+      }
+
+      # swarm/docker: direct ip to browser container
+      if ($ip_or_index ~* ^[\d]+\.[\d]+\.[\d]+\.[\d]+$) {
+        proxy_pass http://$ip_or_index:9037/ws;
+      }
+
       proxy_set_header Host "localhost";
 
       proxy_http_version 1.1;
@@ -54,7 +63,7 @@ server {
 
     location = /access_check {
       internal;
-      proxy_pass http://${BACKEND_HOST}:8000/api/archives/$archive/crawls/$crawl/access?auth_bearer=$auth_bearer;
+      proxy_pass http://${BACKEND_HOST}:8000/api/archives/$archive/crawls/$crawl/access/$ip_or_index?auth_bearer=$auth_bearer;
       proxy_pass_request_body off;
       proxy_set_header Content-Length "";
     }

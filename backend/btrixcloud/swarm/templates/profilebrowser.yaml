@@ -27,14 +27,6 @@ services:
         browser: {{ id }}
         role: browser
 
-      resources:
-        limits:
-          cpus: "{{ crawler_limits_cpu }}"
-          memory: "{{ crawler_limits_memory }}"
-        reservations:
-          cpus: "{{ crawler_requests_cpu }}"
-          memory: "{{ crawler_requests_memory }}"
-
     environment:
       - STORE_ENDPOINT_URL={{ endpoint_url }}
       - STORE_ACCESS_KEY={{ access_key }}

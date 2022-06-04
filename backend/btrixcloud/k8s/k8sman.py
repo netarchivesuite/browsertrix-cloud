@@ -77,27 +77,6 @@ class K8SManager(BaseCrawlManager, K8sAPI):
                 name=archive_storage_name, namespace=self.namespace, body=crawl_secret
             )
 
-    async def update_crawl_schedule_or_scale(
-        self, crawlconfig, scale=None, schedule=None
-    ):
-        """ Update the schedule or scale for existing crawl config """
-
-        if schedule is not None:
-            await self._update_scheduled_job(crawlconfig)
-
-        if scale is not None:
-            config_map = await self.core_api.read_namespaced_config_map(
-                name=f"crawl-config-{crawlconfig.id}", namespace=self.namespace
-            )
-
-            config_map.data["INITIAL_SCALE"] = str(scale)
-
-            await self.core_api.patch_namespaced_config_map(
-                name=config_map.metadata.name, namespace=self.namespace, body=config_map
-            )
-
-        return True
-
     async def get_default_storage_access_endpoint(self, name):
         """ Get access_endpoint for default storage """
         return (await self.get_default_storage(name)).access_endpoint_url
@@ -158,6 +137,9 @@ class K8SManager(BaseCrawlManager, K8sAPI):
         """ delete browser job, if it is a profile browser job """
         return await self._handle_completed_job(f"job-{browserid}")
 
+    def set_watch_ips(self, crawl):
+        """ not watching by IPs, so do nothing """
+
     # ========================================================================
     # Internal Methods
 
@@ -195,11 +177,16 @@ class K8SManager(BaseCrawlManager, K8sAPI):
         data = kwargs
         data["crawl-config.json"] = json.dumps(crawlconfig.get_raw_config())
 
+        labels = {
+            "btrix.crawlconfig": str(crawlconfig.id),
+            "btrix.archive": str(crawlconfig.aid),
+        }
+
         config_map = self.client.V1ConfigMap(
             metadata={
                 "name": f"crawl-config-{crawlconfig.id}",
                 "namespace": self.namespace,
-                # "labels": labels,
+                "labels": labels,
             },
             data=data,
         )

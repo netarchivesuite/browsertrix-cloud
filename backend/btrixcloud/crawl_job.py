@@ -26,10 +26,12 @@ class CrawlJob(ABC):
             "cid": self.crawl_updater.cid,
             "storage_name": self.crawl_updater.storage_name or "default",
             "storage_path": self.crawl_updater.storage_path or "",
-            "scale": self.crawl_updater.scale,
+            "scale": 1,
             "redis_url": self.redis_url,
             "profile_filename": os.environ.get("PROFILE_FILENAME"),
         }
+
+        self._add_extra_crawl_template_params(params)
 
         self.shutdown_pending = False
 
@@ -40,16 +42,21 @@ class CrawlJob(ABC):
         scale = None
         crawl = await self._get_crawl()
 
-        # if doesn't exist, create
+        # if doesn't exist, create, using scale from config
         if not crawl:
+            params["scale"] = await self.crawl_updater.load_initial_scale()
+
             await self.init_job_objects(template, params)
         else:
+        # if already running, get actual scale (which may be different from the one in config)
             scale = self._get_replicas(crawl)
 
         await self.crawl_updater.init_crawl_updater(self.redis_url, scale)
 
     async def delete_crawl(self):
         """ delete crawl stateful sets, services and pvcs """
+        self.shutdown_pending = True
+
         await self.delete_job_objects(f"crawl={self.job_id}")
 
     async def scale_to(self, scale):
@@ -59,7 +66,7 @@ class CrawlJob(ABC):
         if not crawl:
             return False
 
-        self._set_replicas(crawl, scale)
+        await self._set_replicas(crawl, scale)
 
         await self.crawl_updater.update_crawl(scale=scale)
 
@@ -87,9 +94,11 @@ class CrawlJob(ABC):
         """ register signal and app handlers """
 
         def sig_handler():
+            if self.shutdown_pending:
+                return
+
             print("got SIGTERM, job not complete, but shutting down", flush=True)
-            if not self.shutdown_pending:
-                sys.exit(3)
+            sys.exit(3)
 
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGTERM, sig_handler)
@@ -109,6 +118,9 @@ class CrawlJob(ABC):
         @app.get("/healthz")
         async def healthz():
             return {}
+
+    def _add_extra_crawl_template_params(self, params):
+        """ add extra params, if any, for crawl template """
 
     @abstractmethod
     async def init_job_objects(self, template, params):
