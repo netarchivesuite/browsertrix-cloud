@@ -82,28 +82,38 @@ services:
     env_file:
       - ./configs/config.env
 
-  #init_minio_bucket:
-  #  image: minio/mc
-  #  entrypoint: "/bin/sh"
-  #  command: ['-c', 'mc mb local/test-bucket; mc policy set public local/test-bucket' ]
-  #  restart: "no"
+  init_minio_bucket:
+    image: minio/mc
+    entrypoint: "/bin/sh"
+    command:
+      - -c
+      - mc mb local/test-bucket
+      #- mc policy set public local/test-bucket
 
-  #  env_file:
-  #    - ./configs/config.env
+    restart: "no"
+    deploy:
+      restart_policy:
+        condition: none
 
-  #  depends_on:
-  #    - minio
+    env_file:
+      - ./configs/config.env
+
+    depends_on:
+      - minio
 
   # adding here to ensure "tianon/true" is pulled, it's used to create volumes with configs
-#  volume_placeholder_image:
-#    image: tianon/true
-#    container_name: volume_placeholder
+  volume_placeholder_image:
+    image: tianon/true
+    restart: "no"
+    deploy:
+      restart_policy:
+        condition: none
+
 
 # enable to support signing of wacz files
 # port 80 must be open to automatically generate cert via LetsEncrypt
 #  authsign:
 #    image: webrecorder/authsign:0.4.0
-#    platform: linux/amd64
 
 #    volumes:
 #      - btrix-sign-data:/data
@@ -123,7 +133,6 @@ volumes:
   btrix-mongo-data:
   btrix-minio-data:
   btrix-sign-data:
-
 
 networks:
   default:
