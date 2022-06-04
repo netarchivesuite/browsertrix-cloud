@@ -3,12 +3,13 @@
 import os
 import asyncio
 
-# import sys
+import sys
 import yaml
 
 from fastapi.templating import Jinja2Templates
 
 from .utils import get_templates_dir, run_swarm_stack, delete_swarm_stack
+from ..utils import random_suffix
 
 
 # =============================================================================
@@ -24,6 +25,10 @@ class SwarmJobMixin:
         self.curr_storage = {}
 
         self.job_id = os.environ.get("JOB_ID")
+
+        if os.environ.get("RUN_MANUAL") == "0":
+            self.job_id += "-" + random_suffix()
+
         self.prefix = os.environ.get("STACK_PREFIX", "stack-")
 
         if self.custom_config_file:
@@ -79,8 +84,13 @@ class SwarmJobMixin:
         """ remove swarm service stack """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, delete_swarm_stack, self.prefix + self.job_id)
-        print("Removed other objects, removing ourselves", flush=True)
-        await loop.run_in_executor(None, delete_swarm_stack, f"job-{self.job_id}")
+
+        if os.environ.get("RUN_MANUAL") != "0":
+            print("Removed other objects, removing ourselves", flush=True)
+            await loop.run_in_executor(None, delete_swarm_stack, f"job-{self.job_id}")
+        else:
+            sys.exit(0)
+
         return True
 
     def load_storage(self, filename, storage_name):

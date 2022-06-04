@@ -165,7 +165,7 @@ class BaseCrawlManager(ABC):
 
         return crawl_id
 
-    async def _load_job_template(self, crawlconfig, job_id, manual):
+    async def _load_job_template(self, crawlconfig, job_id, manual, schedule=None):
         params = {
             "id": job_id,
             "cid": str(crawlconfig.id),
@@ -173,6 +173,7 @@ class BaseCrawlManager(ABC):
             "aid": str(crawlconfig.aid),
             "job_image": self.job_image,
             "manual": "1" if manual else "0",
+            "schedule": schedule,
         }
 
         self._add_extra_crawl_job_params(params)

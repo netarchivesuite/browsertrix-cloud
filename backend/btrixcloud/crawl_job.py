@@ -44,8 +44,9 @@ class CrawlJob(ABC):
 
         # if doesn't exist, create, using scale from config
         if not crawl:
-            params["scale"] = await self.crawl_updater.load_initial_scale()
+            scale = await self.crawl_updater.load_initial_scale()
 
+            params["scale"] = scale
             await self.init_job_objects(template, params)
         else:
             # if already running, get actual scale (which may be different from the one in config)

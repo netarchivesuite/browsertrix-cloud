@@ -11,7 +11,9 @@ from .utils import (
     get_templates_dir,
     run_swarm_stack,
     delete_swarm_stack,
+    get_service,
     get_service_labels,
+    set_service_label,
     ping_containers,
     create_config,
     delete_configs,
@@ -115,6 +117,41 @@ class SwarmManager(BaseCrawlManager):
 
     async def _update_scheduled_job(self, crawlconfig):
         """ update schedule on crawl job """
+
+        cid = str(crawlconfig.id)
+
+        crawl_id = f"sched-{cid[:12]}"
+        stack_name = f"job-{crawl_id}"
+        service_name = f"{stack_name}_job"
+
+        label_name = "swarm.cronjob.schedule"
+
+        cron_job = await self.loop.run_in_executor(None, get_service, service_name)
+
+        if cron_job:
+            curr_schedule = cron_job.spec.labels.get(label_name)
+
+            if crawlconfig.schedule and crawlconfig.schedule != curr_schedule:
+                await self.loop.run_in_executor(
+                    None,
+                    set_service_label,
+                    service_name,
+                    f"{label_name}={crawlconfig.schedule}",
+                )
+
+            if not crawlconfig.schedule:
+                await self.loop.run_in_executor(None, delete_swarm_stack, stack_name)
+
+            return
+
+        if not crawlconfig.schedule:
+            return
+
+        data = await self._load_job_template(
+            crawlconfig, crawl_id, manual=False, schedule=crawlconfig.schedule
+        )
+
+        await self._create_from_yaml(f"job-{crawl_id}", data)
 
     async def _post_to_job(self, crawl_id, aid, path, data=None):
         """ make a POST request to the container for specified crawl job """

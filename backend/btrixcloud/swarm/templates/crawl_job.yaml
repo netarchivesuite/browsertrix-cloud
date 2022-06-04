@@ -19,14 +19,22 @@ services:
       - btrix
 
     deploy:
+      replicas: {{ 1 if not schedule else 0 }}
       labels:
         btrix.run.manual: "{{ manual }}"
         btrix.user: {{ userid }}
         btrix.archive: {{ aid }}
         btrix.crawlconfig: {{ cid }}
 
-      #mode: replicated-job
-      replicas: 1
+    {% if schedule %}
+        swarm.cronjob.enable: "true"
+        swarm.cronjob.skip-running: "true"
+        swarm.cronjob.schedule: "{{ schedule }}"
+    {% endif %}
+
+      mode: replicated
+      restart_policy:
+        condition: none
 
     environment:
       SHARED_JOB_CONFIG: shared_job_config.yaml

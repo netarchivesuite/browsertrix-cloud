@@ -54,8 +54,7 @@ class CrawlUpdater:
     async def init_crawl_updater(self, redis_url, scale=None):
         """ init crawl, then init redis, wait for valid connection """
 
-        if scale:
-            self.scale = scale
+        self.scale = scale
 
         await self.init_crawl()
         prev_start_time = None

@@ -3,8 +3,9 @@
 import tempfile
 import os
 import base64
+import subprocess
 
-from python_on_whales import docker
+from python_on_whales import docker, client_config
 from python_on_whales.exceptions import DockerException
 
 
@@ -93,6 +94,28 @@ def get_service_labels(service_name):
     """ get labels from a swarm service """
     service = get_service(service_name)
     return service.spec.labels if service else {}
+
+
+def set_service_label(service_name, label):
+    """ update label """
+    exe_file = client_config.get_docker_binary_path_in_cache()
+
+    try:
+        subprocess.run(
+            [
+                exe_file,
+                "service",
+                "update",
+                service_name,
+                "--label-add",
+                label,
+            ],
+            capture_output=True,
+            check=True,
+        )
+    # pylint: disable=broad-except
+    except Exception as exc:
+        print(exc, flush=True)
 
 
 def scale_service(service_name, new_scale):
