@@ -137,11 +137,13 @@ def scale_service(service_name, new_scale):
 def ping_containers(value, signal_="SIGTERM"):
     """ ping running containers with given service name with signal """
     try:
+        count = 0
         conts = docker.container.list(filters={"name": value})
         for cont in conts:
             print("Sending Signal: " + signal_, flush=True)
             cont.kill(signal_)
-        return True
+            count += 1
+        return count
     except DockerException as exc:
         print(exc, flush=True)
-        return False
+        return 0

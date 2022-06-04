@@ -140,7 +140,17 @@ class SwarmManager(BaseCrawlManager):
                 )
 
             if not crawlconfig.schedule:
-                await self.loop.run_in_executor(None, delete_swarm_stack, stack_name)
+                # if currently running, ping container to exit on current job
+                # otherwise, delete!
+                if not await self.loop.run_in_executor(
+                    None,
+                    ping_containers,
+                    service_name,
+                    "SIGUSR1",
+                ):
+                    await self.loop.run_in_executor(
+                        None, delete_swarm_stack, stack_name
+                    )
 
             return
 

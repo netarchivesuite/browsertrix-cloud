@@ -2,6 +2,7 @@
 
 import os
 import asyncio
+import signal
 
 import sys
 import yaml
@@ -26,7 +27,13 @@ class SwarmJobMixin:
 
         self.job_id = os.environ.get("JOB_ID")
 
-        if os.environ.get("RUN_MANUAL") == "0":
+        # in case id is modified below, should be able to delete self
+        self.orig_job_id = self.job_id
+
+        self.remove_schedule = False
+        self.is_scheduled = os.environ.get("RUN_MANUAL") == "0"
+
+        if self.is_scheduled:
             self.job_id += "-" + random_suffix()
 
         self.prefix = os.environ.get("STACK_PREFIX", "stack-")
@@ -50,6 +57,9 @@ class SwarmJobMixin:
 
     async def init_job_objects(self, template, extra_params=None):
         """ init swarm objects from specified template with given extra_params """
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGUSR1, self.unschedule_job)
+
         if self.shared_config_file:
             with open("/" + self.shared_config_file) as fh_config:
                 params = yaml.safe_load(fh_config)
@@ -75,7 +85,6 @@ class SwarmJobMixin:
             params.update(self.curr_storage)
 
         data = self.templates.env.get_template(template).render(params)
-        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, run_swarm_stack, self.prefix + self.job_id, data
         )
@@ -85,13 +94,20 @@ class SwarmJobMixin:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, delete_swarm_stack, self.prefix + self.job_id)
 
-        if os.environ.get("RUN_MANUAL") != "0":
+        if not self.is_scheduled or self.remove_schedule:
             print("Removed other objects, removing ourselves", flush=True)
-            await loop.run_in_executor(None, delete_swarm_stack, f"job-{self.job_id}")
+            await loop.run_in_executor(
+                None, delete_swarm_stack, f"job-{self.orig_job_id}"
+            )
         else:
             sys.exit(0)
 
         return True
+
+    def unschedule_job(self):
+        """ mark job as unscheduled"""
+        print("Unscheduled, will delete when finished", flush=True)
+        self.remove_schedule = True
 
     def load_storage(self, filename, storage_name):
         """ load storage credentials for given storage from yaml file """
