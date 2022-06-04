@@ -11,6 +11,7 @@ import Fuse from "fuse.js";
 
 import type { AuthState } from "../../utils/AuthService";
 import LiteElement, { html } from "../../utils/LiteElement";
+import type { InitialCrawlTemplate } from "./crawl-templates-new";
 import type { CrawlTemplate } from "./types";
 import { getUTCSchedule } from "./utils";
 import "../../components/crawl-scheduler";
@@ -537,7 +538,7 @@ export class CrawlTemplatesList extends LiteElement {
           }}
         >
           <span class="whitespace-nowrap">
-            ${this.runningCrawlsMap[t.id] ? msg("View crawl") : msg("Run now")}
+            ${this.runningCrawlsMap[t.id] ? msg("Watch crawl") : msg("Run now")}
           </span>
         </button>
       </div>
@@ -581,15 +582,14 @@ export class CrawlTemplatesList extends LiteElement {
    * Create a new template using existing template data
    */
   private async duplicateConfig(template: CrawlTemplate) {
-    const config: CrawlTemplate["config"] = {
-      ...template.config,
+    const crawlTemplate: InitialCrawlTemplate = {
+      name: msg(str`${template.name} Copy`),
+      config: template.config,
+      profileid: template.profileid || null,
     };
 
     this.navTo(`/archives/${this.archiveId}/crawl-templates/new`, {
-      crawlTemplate: {
-        name: msg(str`${template.name} Copy`),
-        config,
-      },
+      crawlTemplate,
     });
 
     this.notify({
@@ -680,7 +680,7 @@ export class CrawlTemplatesList extends LiteElement {
               href="/archives/${this
                 .archiveId}/crawls/crawl/${data.started}#watch"
               @click=${this.navLink.bind(this)}
-              >View crawl</a
+              >Watch crawl</a
             >`
         ),
         type: "success",
