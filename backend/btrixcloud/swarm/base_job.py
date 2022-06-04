@@ -84,15 +84,12 @@ class SwarmJobMixin:
         if self.curr_storage:
             params.update(self.curr_storage)
 
-        data = self.templates.env.get_template(template).render(params)
-        return await loop.run_in_executor(
-            None, run_swarm_stack, self.prefix + self.job_id, data
-        )
+        await self._do_create(loop, template, params)
 
     async def delete_job_objects(self, _):
         """ remove swarm service stack """
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, delete_swarm_stack, self.prefix + self.job_id)
+        await self._do_delete(loop)
 
         if not self.is_scheduled or self.remove_schedule:
             print("Removed other objects, removing ourselves", flush=True)
@@ -121,3 +118,12 @@ class SwarmJobMixin:
             if storage.get("name") == storage_name:
                 self.curr_storage = storage
                 break
+
+    async def _do_create(self, loop, template, params):
+        data = self.templates.env.get_template(template).render(params)
+        return await loop.run_in_executor(
+            None, run_swarm_stack, self.prefix + self.job_id, data
+        )
+
+    async def _do_delete(self, loop):
+        await loop.run_in_executor(None, delete_swarm_stack, self.prefix + self.job_id)

@@ -137,9 +137,6 @@ class K8SManager(BaseCrawlManager, K8sAPI):
         """ delete browser job, if it is a profile browser job """
         return await self._handle_completed_job(f"job-{browserid}")
 
-    def set_watch_ips(self, crawl):
-        """ not watching by IPs, so do nothing """
-
     # ========================================================================
     # Internal Methods
 

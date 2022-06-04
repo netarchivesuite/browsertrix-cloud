@@ -45,6 +45,7 @@ services:
     environment:
       - BACKEND_HOST=backend
       - CRAWLER_FQDN_SUFFIX=
+      - CRAWLER_SVC_SUFFIX=
 
   swarm-cronjob:
     image: crazymax/swarm-cronjob
@@ -60,6 +61,21 @@ services:
       placement:
         constraints:
           - node.role == manager
+
+  prune-resources:
+    image: docker
+    command: ["docker", "volumes", "prune", "-f", "--filter", "label=crawl"]
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    deploy:
+      mode: global
+      replicas: 0
+      labels:
+        - "swarm.cronjob.enable=true"
+        - "swarm.cronjob.schedule=0 */5 * * * *"
+        - "swarm.cronjob.skip-running=false"
+      restart_policy:
+        condition: none
 
   mongo:
     image: mongo

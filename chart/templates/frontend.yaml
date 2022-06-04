@@ -60,6 +60,9 @@ spec:
             - name: CRAWLER_FQDN_SUFFIX
               value: ".{{ .Values.crawler_namespace }}.svc.cluster.local"
 
+            - name: CRAWLER_SVC_SUFFIX
+              value: ".crawl-$crawl"
+
           resources:
             limits:
               cpu: {{ .Values.nginx_limits_cpu }}

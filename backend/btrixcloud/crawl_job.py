@@ -21,12 +21,12 @@ class CrawlJob(ABC):
         super().__init__()
 
         self.crawl_updater = CrawlUpdater(self.job_id, self)
+        self._cached_params = {}
 
         params = {
             "cid": self.crawl_updater.cid,
             "storage_name": self.crawl_updater.storage_name or "default",
             "storage_path": self.crawl_updater.storage_path or "",
-            "scale": 1,
             "redis_url": self.redis_url,
             "profile_filename": os.environ.get("PROFILE_FILENAME"),
         }
@@ -50,7 +50,7 @@ class CrawlJob(ABC):
             await self.init_job_objects(template, params)
         else:
             # if already running, get actual scale (which may be different from the one in config)
-            scale = self._get_replicas(crawl)
+            scale = self._get_scale(crawl)
 
         await self.crawl_updater.init_crawl_updater(self.redis_url, scale)
 
@@ -61,13 +61,9 @@ class CrawlJob(ABC):
         await self.delete_job_objects(f"crawl={self.job_id}")
 
     async def scale_to(self, scale):
-        """ scale to 'scale' replicas """
-        crawl = await self._get_crawl()
-
-        if not crawl:
+        """ scale to 'scale' """
+        if not await self._do_scale(scale):
             return False
-
-        await self._set_replicas(crawl, scale)
 
         await self.crawl_updater.update_crawl(scale=scale)
 
@@ -136,11 +132,11 @@ class CrawlJob(ABC):
         """ get runnable object represnting this crawl """
 
     @abstractmethod
-    def _get_replicas(self, crawl):
-        """ return number of replicas """
+    def _get_scale(self, crawl):
+        """ return current scale """
 
     @abstractmethod
-    async def _set_replicas(self, crawl, scale):
+    async def _do_scale(self, new_scale):
         """ set number of replicas """
 
     @abstractmethod

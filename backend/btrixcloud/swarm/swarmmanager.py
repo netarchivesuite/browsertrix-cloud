@@ -1,7 +1,6 @@
 """ Swarn Runner """
 import os
 import json
-import socket
 
 import aiohttp
 
@@ -76,19 +75,6 @@ class SwarmManager(BaseCrawlManager):
         return await self.loop.run_in_executor(
             None, delete_swarm_stack, f"job-{browserid}"
         )
-
-    def set_watch_ips(self, crawl):
-        """ fill IPs for crawl """
-        service_name = f"crawl-{crawl.id}_crawler"
-
-        try:
-            result = socket.gethostbyname_ex(service_name)
-            crawl.watchIPs = result[2]
-        # pylint: disable=bare-except
-        except:
-            pass
-
-        print("ips", crawl.watchIPs, flush=True)
 
     def _add_extra_crawl_job_params(self, params):
         """ add extra crawl job params """

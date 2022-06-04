@@ -14,18 +14,22 @@ services:
       - "@profiles/{{ profile_filename }}"
     {%- endif %}
 
-    #hostname: "browser-{{ id }}-0.browser-{{ id }}"
+    hostname: "crawl-{{ id }}-{{ index }}"
+
     networks:
       - btrix
 
     configs:
       - crawlconfig.json
 
+    volumes:
+      - crawl-data:/crawls
+
     stop_grace_period: 1000s
 
     deploy:
       endpoint_mode: dnsrr
-      replicas: {{ scale }}
+      replicas: 1
       labels:
         crawl: {{ id }}
         role: crawler
@@ -57,6 +61,7 @@ services:
       - WEBHOOK_URL={{ redis_url }}/crawls-done
       - CRAWL_ARGS={{ crawler_args }}
 
+{% if index == 0 %}
   redis:
     image: {{ redis_image }}
     command: ["redis-server", "--appendonly", "yes"]
@@ -71,6 +76,8 @@ services:
     networks:
       - btrix
 
+{% endif %}
+
 networks:
   btrix:
     external: 
@@ -80,3 +87,11 @@ configs:
   crawlconfig.json:
     external: true
     name: crawl-config-{{ cid }}
+
+volumes:
+  crawl-data:
+    name: "crawl-{{ id }}-{{ index }}" 
+    labels:
+      btrix.crawl: {{ id }}
+
+

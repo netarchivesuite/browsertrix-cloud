@@ -14,10 +14,14 @@ app = FastAPI()
 class K8SCrawlJob(K8SJobMixin, CrawlJob):
     """ Crawl Job State """
 
-    async def _set_replicas(self, crawl, scale):
+    async def _do_scale(self, new_scale):
+        crawl = await self._get_crawl()
+        if not crawl:
+            return False
+
         # if making scale smaller, ensure existing crawlers saved their data
         pods = []
-        for inx in range(scale, crawl.spec.replicas):
+        for inx in range(new_scale, crawl.spec.replicas):
             pods.append(
                 await self.core_api.read_namespaced_pod(
                     name=f"crawl-{self.job_id}-{inx}",
@@ -28,13 +32,15 @@ class K8SCrawlJob(K8SJobMixin, CrawlJob):
         if pods:
             await send_signal_to_pods(self.core_api_ws, self.namespace, pods, "SIGUSR1")
 
-        crawl.spec.replicas = scale
+        crawl.spec.replicas = new_scale
 
         await self.apps_api.patch_namespaced_stateful_set(
             name=crawl.metadata.name, namespace=self.namespace, body=crawl
         )
 
-    def _get_replicas(self, crawl):
+        return True
+
+    def _get_scale(self, crawl):
         return crawl.spec.replicas
 
     async def _get_crawl(self):

@@ -187,10 +187,6 @@ class BaseCrawlManager(ABC):
         """ update initial scale in config, if needed (k8s only) """
 
     @abstractmethod
-    def set_watch_ips(self, crawl):
-        """ fill watch IPs, if watching by accessing IPs directly """
-
-    @abstractmethod
     async def check_storage(self, storage_name, is_default=False):
         """ check if given storage is valid """
 

@@ -38,6 +38,16 @@ def delete_swarm_stack(name):
         return False
 
 
+def delete_volumes(names):
+    """ remove stack """
+    try:
+        docker.volume.remove(names)
+        return True
+    except DockerException as exc:
+        print(exc, flush=True)
+        return False
+
+
 def create_config(name, data, labels):
     """ create config from specified data """
     with tempfile.NamedTemporaryFile("wt") as fh_io:
