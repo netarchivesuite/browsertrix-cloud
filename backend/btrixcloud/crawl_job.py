@@ -48,7 +48,7 @@ class CrawlJob(ABC):
 
             await self.init_job_objects(template, params)
         else:
-        # if already running, get actual scale (which may be different from the one in config)
+            # if already running, get actual scale (which may be different from the one in config)
             scale = self._get_replicas(crawl)
 
         await self.crawl_updater.init_crawl_updater(self.redis_url, scale)

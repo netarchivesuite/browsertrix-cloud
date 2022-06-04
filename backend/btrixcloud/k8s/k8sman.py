@@ -176,6 +176,7 @@ class K8SManager(BaseCrawlManager, K8sAPI):
         """ Create Config Map based on CrawlConfig """
         data = kwargs
         data["crawl-config.json"] = json.dumps(crawlconfig.get_raw_config())
+        data["INITIAL_SCALE"] = str(crawlconfig.scale)
 
         labels = {
             "btrix.crawlconfig": str(crawlconfig.id),
@@ -296,6 +297,17 @@ class K8SManager(BaseCrawlManager, K8sAPI):
 
         await self.batch_api.create_namespaced_cron_job(
             namespace=self.namespace, body=cron_job
+        )
+
+    async def _update_config_initial_scale(self, crawlconfig, scale):
+        config_map = await self.core_api.read_namespaced_config_map(
+            name=f"crawl-config-{crawlconfig.id}", namespace=self.namespace
+        )
+
+        config_map.data["INITIAL_SCALE"] = str(scale)
+
+        await self.core_api.patch_namespaced_config_map(
+            name=config_map.metadata.name, namespace=self.namespace, body=config_map
         )
 
 

@@ -59,14 +59,14 @@ class SwarmManager(BaseCrawlManager):
         return await self.loop.run_in_executor(
             None,
             ping_containers,
-            f"job-{browserid}_browser",
+            f"job-{browserid}_job",
             "SIGUSR1",
         )
 
     async def get_profile_browser_metadata(self, browserid):
         """ get browser profile labels """
         return await self.loop.run_in_executor(
-            None, get_service_labels, f"job-{browserid}_browser"
+            None, get_service_labels, f"job-{browserid}_job"
         )
 
     async def delete_profile_browser(self, browserid):
@@ -120,7 +120,7 @@ class SwarmManager(BaseCrawlManager):
         """ make a POST request to the container for specified crawl job """
         async with aiohttp.ClientSession() as session:
             async with session.request(
-                "POST", f"http://job-{crawl_id}_browser:8000{path}", json=data
+                "POST", f"http://job-{crawl_id}_job:8000{path}", json=data
             ) as resp:
                 await resp.json()
 

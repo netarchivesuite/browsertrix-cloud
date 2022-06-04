@@ -1,7 +1,7 @@
 version: '3.9'
 
 services:
-  browser:
+  job:
     image: {{ job_image }}
     command: ["uvicorn", "btrixcloud.swarm.crawl_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
 

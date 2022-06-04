@@ -38,8 +38,7 @@ class CrawlUpdater:
 
         self.is_manual = os.environ.get("RUN_MANUAL") == "1"
 
-        # self.scale = int(os.environ.get("INITIAL_SCALE") or "1")
-        self.scale = 1
+        self.scale = int(os.environ.get("INITIAL_SCALE") or 0)
 
         self.storage_path = os.environ.get("STORE_PATH")
         self.storage_name = os.environ.get("STORAGE_NAME")
@@ -239,12 +238,14 @@ class CrawlUpdater:
         """ get stats from redis for running or finished crawl """
 
     async def load_initial_scale(self):
-        """ load scale from config """
+        """ load scale from config if not set """
+        if self.scale:
+            return self.scale
+
         try:
             result = await self.crawl_configs.find_one(
                 {"_id": self.cid}, {"scale": True}
             )
-            print(result, flush=True)
             return result["scale"]
         # pylint: disable=broad-except
         except Exception as exc:

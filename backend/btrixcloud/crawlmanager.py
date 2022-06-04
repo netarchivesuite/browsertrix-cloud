@@ -98,7 +98,6 @@ class BaseCrawlManager(ABC):
             USER_ID=str(crawlconfig.userid),
             ARCHIVE_ID=str(crawlconfig.aid),
             CRAWL_CONFIG_ID=str(crawlconfig.id),
-            # INITIAL_SCALE=str(crawlconfig.scale),
             PROFILE_FILENAME=profile_filename,
         )
 
@@ -125,6 +124,9 @@ class BaseCrawlManager(ABC):
 
         if schedule is not None:
             await self._update_scheduled_job(crawlconfig)
+
+        if scale is not None:
+            await self._update_config_initial_scale(crawlconfig, scale)
 
         return True
 
@@ -178,7 +180,10 @@ class BaseCrawlManager(ABC):
         return self.templates.env.get_template("crawl_job.yaml").render(params)
 
     def _add_extra_crawl_job_params(self, params):
-        """ add extra params for crawl job template, if any """
+        """ add extra params for crawl job template, if any (swarm only) """
+
+    async def _update_config_initial_scale(self, crawlconfig, scale):
+        """ update initial scale in config, if needed (k8s only) """
 
     @abstractmethod
     def set_watch_ips(self, crawl):
