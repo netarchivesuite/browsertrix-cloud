@@ -132,7 +132,7 @@ volumes:
 
 networks:
   default:
-    name: btrix-cloud-net
+    name: btrix-net
 
 configs:
   shared_job_config:

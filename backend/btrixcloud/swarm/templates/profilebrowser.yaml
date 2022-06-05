@@ -37,5 +37,5 @@ services:
 networks:
   btrix:
     external: 
-      name: btrix-cloud-net
+      name: btrix-net
 

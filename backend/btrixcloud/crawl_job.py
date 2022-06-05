@@ -65,7 +65,7 @@ class CrawlJob(ABC):
         if not await self._do_scale(scale):
             return False
 
-        await self.crawl_updater.update_crawl(scale=scale)
+        await self.crawl_updater.update_scale(scale)
 
         return True
 

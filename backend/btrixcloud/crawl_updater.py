@@ -122,6 +122,11 @@ class CrawlUpdater:
 
             await self.job.delete_crawl()
 
+    async def update_scale(self, new_scale):
+        """ set scale dynamically of running crawl """
+        self.scale = new_scale
+        await self.update_crawl(scale=new_scale)
+
     async def finish_crawl(self):
         """ finish crawl """
         if self.finished:
