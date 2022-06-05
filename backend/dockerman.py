@@ -525,7 +525,16 @@ class DockerManager:
             {
                 "Image": "tianon/true",
                 "Volumes": {volume: {}},
-                "HostConfig": {"Binds": [f"{volume}:/tmp/volume"]},
+                "HostConfig": {
+                    "Mounts": [
+                        {
+                            "Type": "volume",
+                            "Source": volume,
+                            "Target": "/tmp/volume",
+                            "VolumeOptions": {},
+                        }
+                    ],
+                },
             }
         )
 
@@ -625,7 +634,14 @@ class DockerManager:
             "Cmd": command,
             "Env": env_vars,
             "HostConfig": {
-                "Binds": [f"{volume}:/tmp/crawlconfig"],
+                "Mounts": [
+                    {
+                        "Type": "volume",
+                        "Source": volume,
+                        "Target": "/tmp/crawlconfig",
+                        "VolumeOptions": {},
+                    }
+                ],
                 "NetworkMode": self.default_network,
             },
         }
