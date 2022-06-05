@@ -3,7 +3,7 @@ version: '3.8'
 services:
   backend:
     build: ./backend
-    image: localhost:5000/webrecorder/browsertrix-backend:latest
+    image: ${REGISTRY}webrecorder/browsertrix-backend:latest
     volumes:
         - /var/run/docker.sock:/var/run/docker.sock
 
@@ -34,7 +34,7 @@ services:
 
   frontend:
     build: ./frontend
-    image: localhost:5000/webrecorder/browsertrix-frontend:latest
+    image: ${REGISTRY}webrecorder/browsertrix-frontend:latest
     ports:
       - 9871:80
 
@@ -71,7 +71,7 @@ services:
       mode: global
       labels:
         - "swarm.cronjob.enable=true"
-        - "swarm.cronjob.schedule=0 */5 * * * *"
+        - "swarm.cronjob.schedule=0 */5 * * *"
         - "swarm.cronjob.skip-running=false"
       restart_policy:
         condition: none

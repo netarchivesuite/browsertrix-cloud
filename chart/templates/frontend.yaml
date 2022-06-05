@@ -34,6 +34,9 @@ spec:
         - name: nginx-resolver
           emptyDir: {}
 
+        - name: nginx-extra-includes
+          emptyDir: {}
+
       initContainers:
         - name: init-nginx
           image: {{ .Values.nginx_image }}
@@ -43,7 +46,6 @@ spec:
             - name: nginx-resolver
               mountPath: /etc/nginx/resolvers/
 
-
       containers:
         - name: nginx
           image: {{ .Values.nginx_image }}
@@ -51,6 +53,11 @@ spec:
           volumeMounts:
             - name: nginx-resolver
               mountPath: /etc/nginx/resolvers/
+              readOnly: true
+
+            # adding to override /etc/nginx/includes/locations.conf with empty dir for now
+            - name: nginx-extra-includes
+              mountPath: /etc/nginx/includes/
               readOnly: true
 
           env:

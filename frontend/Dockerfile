@@ -35,6 +35,9 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY ./nginx.conf /etc/nginx/nginx.conf
 COPY ./frontend.conf.template /etc/nginx/templates/
 
+RUN mkdir -p /etc/nginx/includes/
+COPY ./locations.conf /etc/nginx/includes/
+
 RUN rm /etc/nginx/conf.d/*
 
 # default docker resolver, overridden in k8s
