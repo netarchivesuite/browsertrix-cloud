@@ -69,7 +69,6 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock"
     deploy:
       mode: global
-      replicas: 0
       labels:
         - "swarm.cronjob.enable=true"
         - "swarm.cronjob.schedule=0 */5 * * * *"
