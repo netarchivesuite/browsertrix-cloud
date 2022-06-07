@@ -184,10 +184,6 @@ class ArchiveOps:
         res = await self.archives.find_one({"_id": aid})
         return Archive.from_dict(res)
 
-    async def update(self, archive: Archive):
-        """Update existing archive"""
-        self.archives.replace_one({"_id": archive.id}, archive.to_dict())
-
     async def update_storage(
         self, archive: Archive, storage: Union[S3Storage, DefaultStorage]
     ):
@@ -216,8 +212,7 @@ class ArchiveOps:
                 status_code=400, detail="Invalid Invite Code, No Such Archive"
             )
 
-        archive.users[str(user.id)] = invite.role
-        await self.update(archive)
+        await self.add_user(archive, user, invite.role)
         return True
 
     async def inc_usage(self, aid: uuid.UUID, amount: int):
@@ -228,8 +223,16 @@ class ArchiveOps:
         )
         return res is not None
 
+    async def add_user(self, archive: Archive, user: User, role: str):
+        """ add/set user in archive as given role """
+        archive.users[str(user.id)] = role
+        await self.archives.find_one_and_update(
+            {"_id": archive.id}, {"$set": {"users": archive.users}}
+        )
+
 
 # ============================================================================
+# pylint: disable=too-many-locals
 def init_archives_api(app, mdb, user_manager, invites, user_dep: User):
     """Init archives api router for /archives"""
     ops = ArchiveOps(mdb, invites)
@@ -304,8 +307,7 @@ def init_archives_api(app, mdb, user_manager, invites, user_dep: User):
         if other_user.email == user.email:
             raise HTTPException(status_code=400, detail="Can't change own role!")
 
-        archive.users[str(other_user.id)] = update.role
-        await ops.update(archive)
+        await ops.add_user(archive, other_user, update.role)
 
         return {"updated": True}
 
@@ -328,6 +330,28 @@ def init_archives_api(app, mdb, user_manager, invites, user_dep: User):
             return {"invited": "new_user"}
 
         return {"invited": "existing_user"}
+
+    @router.post("/invite-or-add", tags=["invites"])
+    async def invite_or_add_user_to_archive(
+        invite: InviteToArchiveRequest,
+        request: Request,
+        archive: Archive = Depends(archive_owner_dep),
+        user: User = Depends(user_dep),
+    ):
+        other_user = await user_manager.user_db.get_by_email(invite.email)
+        if other_user:
+            await ops.add_user(archive, other_user, invite.role)
+            return {"invited": "added_directly"}
+
+        await invites.invite_user(
+            invite,
+            user,
+            user_manager,
+            archive=archive,
+            allow_existing=False,
+            headers=request.headers,
+        )
+        return {"invited": "new_user"}
 
     @app.post("/archives/invite-accept/{token}", tags=["invites"])
     async def accept_invite(token: str, user: User = Depends(user_dep)):
