@@ -520,21 +520,13 @@ class DockerManager:
         creating a dummy container and then deleting"""
 
         data = json.dumps(data).encode("utf-8")
-
+        volumeFile = "/home/btrixcl/.local/share/containers/storage/volumes/" + volume
         container = await self.client.containers.create(
             {
                 "Image": "tianon/true",
-                "Volumes": {volume: {}},
-                "HostConfig": {
-                    "Mounts": [
-                        {
-                            "Type": "volume",
-                            "Source": volume,
-                            "Target": "/tmp/volume",
-                            "VolumeOptions": {},
-                        }
-                    ],
-                },
+                "Volumes": {"/"+volume: {}},
+                "HostConfig": {"Binds": [f"{volumeFile}:/tmp/volume"]},
+                "Propagation": "shared"
             }
         )
 
@@ -626,27 +618,30 @@ class DockerManager:
 
         labels["btrix.run.schedule"] = schedule
         labels["btrix.run.manual"] = "1" if manual else "0"
+        volumeFile = "/home/btrixcl/.local/share/containers/storage/volumes/" + volume
 
         run_config = {
             "Image": self.crawler_image,
-            "Volumes": {volume: {}},
+            "Volumes": {"/"+volume: {}},
             "Labels": labels,
             "Cmd": command,
             "Env": env_vars,
             "HostConfig": {
-                "Mounts": [
-                    {
-                        "Type": "volume",
-                        "Source": volume,
-                        "Target": "/tmp/crawlconfig",
-                        "VolumeOptions": {},
-                    }
-                ],
+                "Binds": [f"{volumeFile}:/tmp/crawlconfig"],
                 "NetworkMode": self.default_network,
+                "Privileged": True
             },
         }
 
         container = await self.client.containers.run(run_config)
+        # container = await self.client.containers.run(
+        #     self.crawler_image,
+        #     command=command,
+        #     labels=labels,
+        #     volumes={"/"+volume: {}},
+        #     environment=env_vars,
+        #
+        # )
         return container["id"][:12]
 
     def _get_container_ip(self, container):

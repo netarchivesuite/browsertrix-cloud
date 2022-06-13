@@ -5,8 +5,9 @@ services:
     build: ./backend
     image: webrecorder/browsertrix-backend
     volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
-
+      - /run/user/4339/podman/podman.sock:/var/run/docker.sock
+    security_opt:
+      - label=disable
     env_file:
       - ./configs/config.env
 
@@ -30,6 +31,12 @@ services:
 
     environment:
       - BACKEND_HOST=backend
+    volumes:
+      - /run/user/4339/podman/podman.sock:/var/run/docker.sock
+    security_opt:
+      - label=disable
+
+
 
   redis:
     image: redis
@@ -77,21 +84,21 @@ services:
 
 # enable to support signing of wacz files
 # port 80 must be open to automatically generate cert via LetsEncrypt
-  authsign:
-    image: webrecorder/authsign:0.4.0
-
-    volumes:
-      - btrix-sign-data:/data
-      - ./configs/signing.yaml:/app-config/signing.yaml
-
-    environment:
-      - CONFIG=/app-config/signing.yaml
-
-    env_file:
-      - ./configs/config.env
-
-    ports:
-      - 80:80
+#  authsign:
+#    image: webrecorder/authsign:0.4.0
+#
+#    volumes:
+#      - btrix-sign-data:/data
+#      - ./configs/signing.yaml:/app-config/signing.yaml
+#
+#    environment:
+#      - CONFIG=/app-config/signing.yaml
+#
+#    env_file:
+#      - ./configs/config.env
+#
+#    ports:
+#      - 80:80
 
 volumes:
   btrix-redis-data:
