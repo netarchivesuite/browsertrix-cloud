@@ -5,18 +5,8 @@ services:
     build: ./backend
     image: ${REGISTRY}webrecorder/browsertrix-backend:latest
 
-    security_opt:
-      - "label=disable"
-
-    volumes:
-      #- /run/podman/podman.sock:/run/podman/podman.sock
-      #- /run/podman/podman.sock:/var/run/docker.sock
-      - /run/user/1000/podman/podman.sock:/run/podman/podman.sock
-      #- /run/user/1000/podman/podman.sock:/var/run/docker.sock
-
     secrets:
       - shared_job_config.yaml
-      #- crawl-opts-07661a05-00b2-407c-b57e-5a54a6806845
 
     env_file:
       - ./configs/config.env
@@ -33,11 +23,6 @@ services:
       - CRAWLER_FQDN_SUFFIX=
       - JOB_IMAGE=${REGISTRY}webrecorder/browsertrix-backend:latest
 
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-
     restart: always
 
   frontend:
@@ -52,9 +37,8 @@ services:
 
     environment:
       - BACKEND_HOST=backend
-      - CRAWLER_FQDN_SUFFIX=.dns.podman
-      - CRAWLER_SVC_SUFFIX=_crawler
-      #proxy_pass http://crawl-$crawl-0_crawler_1.dns.podman:9037/ws;
+      - CRAWLER_FQDN_SUFFIX=
+      - CRAWLER_SVC_SUFFIX=
 
     restart: always
 
@@ -91,30 +75,10 @@ services:
 #    environment:
 #      - MINIO_SERVER_URL=http://127.0.0.1:9000
 
-
-# enable to support signing of wacz files
-# port 80 must be open to automatically generate cert via LetsEncrypt
-#  authsign:
-#    image: webrecorder/authsign:0.4.0
-
-#    volumes:
-#      - btrix-sign-data:/data
-#      - ./configs/signing.yaml:/app-config/signing.yaml
-
-#    environment:
-#      - CONFIG=/app-config/signing.yaml
-
-#    env_file:
-#      - ./configs/config.env
-
-#    ports:
-#      - 80:80
-
 volumes:
   btrix-redis-data:
   btrix-mongo-data:
   btrix-minio-data:
-  btrix-sign-data:
 
 networks:
   default:

@@ -47,8 +47,7 @@ class SwarmManager(BaseCrawlManager):
             for key, storage in storages.items()
         }
 
-        self.use_compose = config.get("use_compose", "0")
-        self.runner = get_runner(self.use_compose)
+        self.runner = get_runner()
 
     async def check_storage(self, storage_name, is_default=False):
         """ check if storage_name is valid storage """
@@ -105,7 +104,7 @@ class SwarmManager(BaseCrawlManager):
     def _add_extra_crawl_job_params(self, params):
         """ add extra crawl job params """
         params["mongo_db_url"] = resolve_db_url()
-        params["use_compose"] = self.use_compose
+        params["runtime"] = os.environ.get("RUNTIME", "")
 
     async def _create_config_map(self, crawlconfig, **kwargs):
         """ create config map for config """

@@ -14,13 +14,16 @@ def get_templates_dir():
     return os.path.join(os.path.dirname(__file__), "templates")
 
 
-def get_runner(use_compose=None):
-    """ return either Swarm or Compose Runner based on env setting """
-    if use_compose is None:
-        use_compose = os.environ.get("USE_COMPOSE", "0")
+# ============================================================================
+def get_runner(runtime=None):
+    """ return either Swarm or Podman Runner based on env setting """
+    if runtime is None:
+        runtime = os.environ.get("RUNTIME", "")
 
-    use_compose = use_compose == "1"
-    return SwarmRunner() if not use_compose else PodmanComposeRunner()
+    if runtime == "podman":
+        return PodmanComposeRunner()
+
+    return SwarmRunner()
 
 
 # ============================================================================
@@ -154,7 +157,7 @@ class PodmanComposeRunner(SwarmRunner):
     def __init__(self):
         # pylint: disable=super-init-not-called
         self.podman_exe = "podman"
-        #self.podman_exe = client_config.get_docker_binary_path_in_cache()
+        # self.podman_exe = client_config.get_docker_binary_path_in_cache()
 
         self.client = DockerClient(client_call=[self.podman_exe])
 
@@ -177,7 +180,8 @@ class PodmanComposeRunner(SwarmRunner):
                         "up",
                         "-d",
                     ],
-                    capture_output=True, check=False
+                    capture_output=True,
+                    check=False,
                 )
                 print("stdout")
                 print("------")
@@ -220,7 +224,7 @@ class PodmanComposeRunner(SwarmRunner):
         """ remove secret by name """
         # python-on-whale calls 'remove' but podman only supports 'rm', so call directly
         try:
-            subprocess.run([self.PODMAN_EXE, "secret", "rm", name], check=True)
+            subprocess.run([self.podman_exe, "secret", "rm", name], check=True)
             return True
         # pylint: disable=broad-except
         except Exception as exc:

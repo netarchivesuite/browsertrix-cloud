@@ -1,5 +1,3 @@
-use_compose: "1"
-
 redis_image: redis
 crawler_image: localhost/webrecorder/browsertrix-crawler:latest
 

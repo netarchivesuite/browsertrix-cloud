@@ -6,9 +6,6 @@ services:
     command: ["uvicorn", "btrixcloud.swarm.crawl_job:app", "--host", "0.0.0.0", "--access-log", "--log-level", "info"]
     container_name: job-{{ id }}_job
 
-    security_opt:
-      - "label=disable"
-
     secrets:
       - btrix_shared_job_config.yaml
       - crawl-opts-{{ cid }}
@@ -48,11 +45,11 @@ services:
       STORAGE_NAME: "{{ storage_name }}"
       PROFILE_PATH: "{{ profile_path }}"
 
-      MONGO_DB_URL: {{ mongo_db_url }}
+      MONGO_DB_URL: "{{ mongo_db_url }}"
 
       RUN_MANUAL: "{{ manual }}"
 
-      USE_COMPOSE: {{ use_compose }}
+      RUNTIME: "{{ runtime }}"
  
 networks:
   btrix:
