@@ -4,14 +4,19 @@ services:
   backend:
     build: ./backend
     image: ${REGISTRY}webrecorder/browsertrix-backend:latest
-    volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
 
-    configs:
-        - shared_job_config
+    security_opt:
+      - "label=disable"
+
+    volumes:
+      #- /run/podman/podman.sock:/run/podman/podman.sock
+      #- /run/podman/podman.sock:/var/run/docker.sock
+      - /run/user/1000/podman/podman.sock:/run/podman/podman.sock
+      #- /run/user/1000/podman/podman.sock:/var/run/docker.sock
 
     secrets:
-        - storages
+      - shared_job_config.yaml
+      #- crawl-opts-07661a05-00b2-407c-b57e-5a54a6806845
 
     env_file:
       - ./configs/config.env
@@ -33,6 +38,8 @@ services:
         constraints:
           - node.role == manager
 
+    restart: always
+
   frontend:
     build: ./frontend
     image: ${REGISTRY}webrecorder/browsertrix-frontend:latest
@@ -45,37 +52,11 @@ services:
 
     environment:
       - BACKEND_HOST=backend
-      - CRAWLER_FQDN_SUFFIX=
-      - CRAWLER_SVC_SUFFIX=
+      - CRAWLER_FQDN_SUFFIX=.dns.podman
+      - CRAWLER_SVC_SUFFIX=_crawler
+      #proxy_pass http://crawl-$crawl-0_crawler_1.dns.podman:9037/ws;
 
-  swarm-cronjob:
-    image: crazymax/swarm-cronjob
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
-
-    environment:
-      - "TZ=UTC"
-      - "LOG_LEVEL=debug"
-      - "LOG_JSON=false"
-
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-
-  prune-resources:
-    image: docker
-    command: ["docker", "volumes", "prune", "-f", "--filter", "label=crawl"]
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
-    deploy:
-      mode: global
-      labels:
-        - "swarm.cronjob.enable=true"
-        - "swarm.cronjob.schedule=0 */5 * * *"
-        - "swarm.cronjob.skip-running=false"
-      restart_policy:
-        condition: none
+    restart: always
 
   mongo:
     image: mongo
@@ -84,6 +65,8 @@ services:
 
     env_file:
       - ./configs/config.env
+
+    restart: always
 
   minio:
     image: minio/minio
@@ -98,6 +81,8 @@ services:
 
     env_file:
       - ./configs/config.env
+
+    restart: always
 
 # enable below to access minio console directly
 #    ports:
@@ -135,13 +120,6 @@ networks:
   default:
     name: btrix-net
 
-configs:
-  shared_job_config:
-    file: ./configs/config.yaml
-
 secrets:
-  storages:
-    file: ./configs/storages.yaml
-
-
-
+  shared_job_config.yaml:
+    file: ./configs/config.yaml

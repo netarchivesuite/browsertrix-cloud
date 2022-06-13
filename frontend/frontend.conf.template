@@ -42,9 +42,11 @@ server {
       set $crawl $2;
       set $num $3;
       set $auth_bearer $arg_auth_bearer;
+      set $svc_suffix "${CRAWLER_SVC_SUFFIX}";
+      set $fqdn_suffix "${CRAWLER_FQDN_SUFFIX}";
       auth_request  /access_check;
 
-      proxy_pass http://crawl-$crawl-$num${CRAWLER_SVC_SUFFIX}${CRAWLER_FQDN_SUFFIX}:9037/ws;
+      proxy_pass http://crawl-$crawl-$num$svc_suffix$fqdn_suffix:9037/ws;
       proxy_set_header Host "localhost";
 
       proxy_http_version 1.1;
