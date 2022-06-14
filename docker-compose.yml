@@ -15,15 +15,10 @@ services:
       - minio
       - mongo
 
-# enable to expose backend api container directly
-#    ports:
-#      - 8000:8000
-
     environment:
       - CRAWLER_FQDN_SUFFIX=
       - JOB_IMAGE=${REGISTRY}webrecorder/browsertrix-backend:latest
-
-    restart: always
+      - SHARED_JOB_CONFIG=shared_job_config.yaml
 
   frontend:
     build: ./frontend
@@ -40,8 +35,6 @@ services:
       - CRAWLER_FQDN_SUFFIX=
       - CRAWLER_SVC_SUFFIX=
 
-    restart: always
-
   mongo:
     image: mongo
     volumes:
@@ -50,7 +43,6 @@ services:
     env_file:
       - ./configs/config.env
 
-    restart: always
 
   minio:
     image: minio/minio
@@ -67,13 +59,6 @@ services:
       - ./configs/config.env
 
     restart: always
-
-# enable below to access minio console directly
-#    ports:
-#      - 9001:9001
-#
-#    environment:
-#      - MINIO_SERVER_URL=http://127.0.0.1:9000
 
 volumes:
   btrix-redis-data:

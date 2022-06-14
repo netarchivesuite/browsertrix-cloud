@@ -1,5 +1,5 @@
 redis_image: redis
-crawler_image: localhost/webrecorder/browsertrix-crawler:latest
+crawler_image: webrecorder/browsertrix-crawler:latest
 
 crawler_requests_cpu: "0.8"
 crawler_limits_cpu: "1.0"
@@ -15,4 +15,3 @@ storages:
     access_endpoint_url: /data/
     access_key: ADMIN
     secret_key: PASSW0RD
-  

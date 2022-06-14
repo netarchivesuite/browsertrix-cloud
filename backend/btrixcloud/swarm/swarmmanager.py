@@ -105,6 +105,8 @@ class SwarmManager(BaseCrawlManager):
         """ add extra crawl job params """
         params["mongo_db_url"] = resolve_db_url()
         params["runtime"] = os.environ.get("RUNTIME", "")
+        params["socket_src"] = os.environ.get("SOCKET_SRC", "/var/run/docker.sock")
+        params["socket_dest"] = os.environ.get("SOCKET_DEST", "/var/run/docker.sock")
 
     async def _create_config_map(self, crawlconfig, **kwargs):
         """ create config map for config """

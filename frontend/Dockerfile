@@ -35,12 +35,7 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 COPY ./nginx.conf /etc/nginx/nginx.conf
 COPY ./frontend.conf.template /etc/nginx/templates/
+COPY ./minio.conf /etc/nginx/includes/
 
-#RUN rm /etc/nginx/conf.d/*; \
-#    mkdir -p /etc/nginx/includes/;
+ADD ./00-default-override-resolver-config.sh ./docker-entrypoint.d/
 
-COPY ./locations.conf /etc/nginx/includes/
-ADD ./resolver-entrypoint.sh /resolver-entrypoint.sh
-
-ENTRYPOINT ["/resolver-entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
